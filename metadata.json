@@ -1,0 +1,6 @@
+{
+  "name": "Trích Xuất & Quản Lý Biển Số Xe Từ Hình Ảnh",
+  "description": "Hệ thống tự động nhận diện biển số xe, thời gian, vị trí và thống kê phân nhóm theo biển số xe từ hình ảnh bằng Gemini AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
