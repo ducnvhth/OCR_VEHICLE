@@ -1,5 +1,6 @@
 import { ExtractionRecord, GroupedVehicle } from '../types';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 
 export function groupRecordsByLicensePlate(records: ExtractionRecord[], threshold: number = 4): GroupedVehicle[] {
   const map = new Map<string, ExtractionRecord[]>();
@@ -83,7 +84,7 @@ export function calculateSystemStats(records: ExtractionRecord[], threshold: num
   };
 }
 
-export function downloadXlsx(records: ExtractionRecord[], threshold: number = 4) {
+export async function downloadXlsx(records: ExtractionRecord[], threshold: number = 4) {
   if (records.length === 0) return;
 
   const groupsMap = new Map<string, number>();
@@ -92,21 +93,40 @@ export function downloadXlsx(records: ExtractionRecord[], threshold: number = 4)
     groupsMap.set(plate, (groupsMap.get(plate) || 0) + 1);
   });
 
-  const headers = [
-    'STT',
-    'Biển số xe',
-    'Thời gian trích xuất',
-    'Giờ',
-    'Ngày',
-    'Tổng ảnh của biển số này',
-    'Trạng thái cảnh báo (Chỉ tiêu ' + threshold + ' ảnh)',
-    'Độ tin cậy AI (%)',
-    'Tên file',
-    'Vị trí',
-    'Ghi chú',
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('ThongKe');
+
+  // Define columns
+  worksheet.columns = [
+    { header: 'STT', key: 'stt', width: 8 },
+    { header: 'Biển số xe', key: 'plate', width: 20 },
+    { header: 'Thời gian trích xuất', key: 'time', width: 25 },
+    { header: 'Giờ', key: 'hour', width: 12 },
+    { header: 'Ngày', key: 'date', width: 15 },
+    { header: 'Tổng ảnh', key: 'total', width: 15 },
+    { header: 'Trạng thái (Chỉ tiêu ' + threshold + ' ảnh)', key: 'status', width: 40 },
+    { header: 'Ảnh gốc', key: 'image', width: 25 },
+    { header: 'Vị trí', key: 'location', width: 25 },
   ];
 
-  const rows = records.map((r, index) => {
+  // Format header row
+  const headerRow = worksheet.getRow(1);
+  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+  headerRow.eachCell((cell) => {
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF2563EB' } // Blue-600
+    };
+  });
+  
+  worksheet.views = [
+    { state: 'frozen', xSplit: 0, ySplit: 1 }
+  ];
+
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
     const plate = r.licensePlate.trim().toUpperCase() || 'CHƯA RÕ BIỂN SỐ';
     const totalForPlate = groupsMap.get(plate) || 1;
     const isWarning = totalForPlate < threshold;
@@ -114,29 +134,49 @@ export function downloadXlsx(records: ExtractionRecord[], threshold: number = 4)
       ? `CẢNH BÁO: Mới có ${totalForPlate}/${threshold} ảnh (Thiếu ${threshold - totalForPlate} ảnh)`
       : `ĐẠT: Có ${totalForPlate}/${threshold} ảnh`;
 
-    return [
-      index + 1,
-      r.licensePlate,
-      r.timestamp,
-      r.formattedTime,
-      r.formattedDate,
-      totalForPlate,
-      statusText,
-      r.confidence,
-      r.fileName,
-      r.location || '',
-      r.notes || '',
-    ];
-  });
+    const rowIndex = i + 2;
 
-  const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-  
-  // Auto-size columns slightly
-  const wscols = headers.map(h => ({ wch: Math.max(15, h.length) }));
-  worksheet['!cols'] = wscols;
+    worksheet.addRow({
+      stt: i + 1,
+      plate: r.licensePlate,
+      time: r.timestamp,
+      hour: r.formattedTime,
+      date: r.formattedDate,
+      total: totalForPlate,
+      status: statusText,
+      image: '', // Blank for embedded image
+      location: r.location || '',
+    });
 
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'ThongKe');
+    const row = worksheet.getRow(rowIndex);
+    row.height = 100;
+    row.alignment = { vertical: 'middle', wrapText: true };
 
-  XLSX.writeFile(workbook, `thong_ke_bien_so_xe_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    if (r.imageSrc && r.imageSrc.startsWith('data:image/')) {
+      try {
+        const base64Data = r.imageSrc.split(',')[1];
+        const extension = r.imageSrc.substring(
+          'data:image/'.length,
+          r.imageSrc.indexOf(';base64')
+        );
+        
+        const imageId = workbook.addImage({
+          base64: base64Data,
+          extension: (extension === 'png' ? 'png' : 'jpeg') as any,
+        });
+
+        worksheet.addImage(imageId, {
+          tl: { col: 7.1, row: rowIndex - 1 + 0.1 },
+          ext: { width: 140, height: 100 },
+          editAs: 'oneCell'
+        });
+      } catch (e) {
+        console.error("Failed to add image to excel:", e);
+      }
+    }
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  saveAs(blob, `thong_ke_bien_so_xe_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
