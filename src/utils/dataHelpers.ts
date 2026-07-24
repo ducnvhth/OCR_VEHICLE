@@ -2,6 +2,7 @@ import { ExtractionRecord, GroupedVehicle } from '../types';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 
+
 export function groupRecordsByLicensePlate(records: ExtractionRecord[], threshold: number = 4): GroupedVehicle[] {
   const map = new Map<string, ExtractionRecord[]>();
 
@@ -84,6 +85,15 @@ export function calculateSystemStats(records: ExtractionRecord[], threshold: num
   };
 }
 
+const getImageDimensions = (src: string): Promise<{width: number, height: number}> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.width, height: img.height });
+    img.onerror = () => resolve({ width: 800, height: 600 }); // fallback
+    img.src = src;
+  });
+};
+
 export async function downloadXlsx(records: ExtractionRecord[], threshold: number = 4) {
   if (records.length === 0) return;
 
@@ -125,8 +135,16 @@ export async function downloadXlsx(records: ExtractionRecord[], threshold: numbe
     { state: 'frozen', xSplit: 0, ySplit: 1 }
   ];
 
-  for (let i = 0; i < records.length; i++) {
-    const r = records[i];
+  const sortedRecords = [...records].sort((a, b) => {
+    const plateA = (a.licensePlate || 'CHƯA RÕ BIỂN SỐ').trim().toUpperCase();
+    const plateB = (b.licensePlate || 'CHƯA RÕ BIỂN SỐ').trim().toUpperCase();
+    if (plateA < plateB) return -1;
+    if (plateA > plateB) return 1;
+    return new Date(b.parsedDateISO).getTime() - new Date(a.parsedDateISO).getTime();
+  });
+
+  for (let i = 0; i < sortedRecords.length; i++) {
+    const r = sortedRecords[i];
     const plate = r.licensePlate.trim().toUpperCase() || 'CHƯA RÕ BIỂN SỐ';
     const totalForPlate = groupsMap.get(plate) || 1;
     const isWarning = totalForPlate < threshold;
@@ -172,6 +190,83 @@ export async function downloadXlsx(records: ExtractionRecord[], threshold: numbe
         });
       } catch (e) {
         console.error("Failed to add image to excel:", e);
+      }
+    }
+  }
+
+  // Create individual sheets for each license plate
+  const groups = groupRecordsByLicensePlate(records, threshold);
+  
+  for (const group of groups) {
+    const safePlate = group.licensePlate.replace(/[\[\]*?:\/\\]/g, '').substring(0, 31) || 'CHƯA RÕ BIỂN SỐ';
+    // ensure unique sheet name if there's somehow a duplicate safePlate
+    let sheetName = safePlate;
+    let counter = 1;
+    while (workbook.worksheets.some(ws => ws.name === sheetName)) {
+      sheetName = `${safePlate.substring(0, 27)}_${counter}`;
+      counter++;
+    }
+    
+    const plateSheet = workbook.addWorksheet(sheetName);
+    
+    plateSheet.columns = [
+      { header: 'STT', key: 'stt', width: 8 },
+      { header: 'Tên file', key: 'filename', width: 30 },
+      { header: 'Thời gian trích xuất', key: 'time', width: 25 },
+      { header: 'Ảnh gốc', key: 'image', width: 50 }, // Wider column for bigger image
+    ];
+
+    const pHeaderRow = plateSheet.getRow(1);
+    pHeaderRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    pHeaderRow.alignment = { vertical: 'middle', horizontal: 'center' };
+    pHeaderRow.eachCell((cell) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF10B981' } }; // Emerald-500
+    });
+    
+    for (let j = 0; j < group.records.length; j++) {
+      const rec = group.records[j];
+      const pRowIndex = j + 2;
+      
+      plateSheet.addRow({
+        stt: j + 1,
+        filename: rec.fileName,
+        time: rec.timestamp,
+        image: '',
+      });
+      
+      const pRow = plateSheet.getRow(pRowIndex);
+      pRow.alignment = { vertical: 'middle', wrapText: true };
+      
+      if (rec.imageSrc && rec.imageSrc.startsWith('data:image/')) {
+        try {
+          const dims = await getImageDimensions(rec.imageSrc);
+          const imgWidth = dims.width;
+          const imgHeight = dims.height;
+
+          // Excel row height is roughly pixels * 0.75
+          pRow.height = imgHeight * 0.75 + 10; // add a little padding
+
+          const base64Data = rec.imageSrc.split(',')[1];
+          const extension = rec.imageSrc.substring(
+            'data:image/'.length,
+            rec.imageSrc.indexOf(';base64')
+          );
+          
+          const imageId = workbook.addImage({
+            base64: base64Data,
+            extension: (extension === 'png' ? 'png' : 'jpeg') as any,
+          });
+          
+          plateSheet.addImage(imageId, {
+            tl: { col: 3.1, row: pRowIndex - 1 + 0.1 }, // Col 4 (index 3)
+            ext: { width: imgWidth, height: imgHeight }, // Original size
+            editAs: 'oneCell'
+          });
+        } catch (e) {
+          console.error("Failed to add image to plate sheet:", e);
+        }
+      } else {
+        pRow.height = 30; // Default height if no image
       }
     }
   }

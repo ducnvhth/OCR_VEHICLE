@@ -215,6 +215,10 @@ export function App() {
     setRecords((prev) => prev.filter((r) => !ids.includes(r.id)));
   };
 
+  const warningPlatesList = useMemo(() => {
+    return groupedVehicles.filter(g => g.isWarning).map(g => g.licensePlate);
+  }, [groupedVehicles]);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
       
@@ -225,12 +229,14 @@ export function App() {
         warningCount={stats.warningPlatesCount}
         threshold={minPhotoThreshold}
         onUploadClick={() => {
-          const area = document.getElementById('dropzone-area');
-          area?.scrollIntoView({ behavior: 'smooth' });
-          area?.click();
+          document.getElementById('upload-input')?.click();
         }}
         onExportExcel={handleExportExcel}
-        onClearAll={handleClearAll}
+        onClearAll={() => {
+          if (window.confirm('Bạn có chắc chắn muốn xóa toàn bộ dữ liệu hiện tại?')) {
+            setRecords([]);
+          }
+        }}
         hasApiKey={hasApiKey}
       />
 
@@ -343,11 +349,11 @@ export function App() {
             
             {/* Warning summary alert bar if any plates fail threshold */}
             {stats.warningPlatesCount > 0 && (
-              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl flex items-center justify-between text-xs text-rose-950 shadow-xs">
-                <div className="flex items-center space-x-2">
-                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl flex flex-col md:flex-row md:items-center justify-between text-xs text-rose-950 shadow-xs gap-3 md:gap-0">
+                <div className="flex items-start md:items-center space-x-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5 md:mt-0" />
                   <span>
-                    Hiện có <strong>{stats.warningPlatesCount} biển số xe</strong> có ít hơn chỉ tiêu <strong>{minPhotoThreshold} ảnh</strong>. Xem chi tiết các thẻ bị gắn cờ cảnh báo phía dưới.
+                    Hiện có <strong>{stats.warningPlatesCount} biển số xe</strong> ({warningPlatesList.join(', ')}) có ít hơn chỉ tiêu <strong>{minPhotoThreshold} ảnh</strong>. Xem chi tiết các thẻ bị gắn cờ cảnh báo phía dưới.
                   </span>
                 </div>
               </div>
@@ -424,18 +430,17 @@ export function App() {
         </div>
       </footer>
 
-      {/* Detail Modal with Interactive Zoom */}
+      {/* Modals */}
       {selectedRecord && (
         <VehicleDetailModal
-        record={selectedRecord}
-        onClose={() => setSelectedRecord(null)}
-        onSave={handleSaveRecord}
-        requiredCount={minPhotoThreshold}
-        totalForPlate={selectedRecordGroupTotal}
-        uniquePlates={Array.from(new Set(records.map(r => r.licensePlate).filter(Boolean)))}
-      />
+          record={selectedRecord}
+          onClose={() => setSelectedRecord(null)}
+          onSave={handleSaveRecord}
+          requiredCount={minPhotoThreshold}
+          totalForPlate={selectedRecordGroupTotal}
+          uniquePlates={Array.from(new Set(records.map(r => r.licensePlate).filter(Boolean)))}
+        />
       )}
-
     </div>
   );
 }
