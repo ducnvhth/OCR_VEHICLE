@@ -7,7 +7,9 @@ interface NavbarProps {
   warningCount: number;
   threshold: number;
   onUploadClick: () => void;
+  onUploadJournal: (file: File) => void;
   onExportExcel: () => void;
+  onExportImages: () => void;
   onClearAll: () => void;
   hasApiKey: boolean;
 }
@@ -18,9 +20,19 @@ export const Navbar: React.FC<NavbarProps> = ({
   warningCount,
   threshold,
   onUploadClick,
+  onUploadJournal,
   onExportExcel,
+  onExportImages,
   onClearAll,
 }) => {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleJournalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      onUploadJournal(e.target.files[0]);
+    }
+  };
+
   return (
     <header className="sticky top-0 z-30 bg-slate-900 border-b border-slate-800 text-slate-100 shadow-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -85,6 +97,23 @@ export const Navbar: React.FC<NavbarProps> = ({
               Tải Ảnh Lên
             </button>
 
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept=".xlsx, .xls"
+              className="hidden"
+              onChange={handleJournalChange}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex items-center px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white transition shadow-sm cursor-pointer shrink-0"
+              id="btn-upload-journal"
+              title="Upload file Nhật trình (Cột A: STT, Cột B: Biển số xe)"
+            >
+              <Database className="w-4 h-4 mr-1.5" />
+              Tải Nhật Trình
+            </button>
+
             {totalRecords > 0 && (
               <>
                 <button
@@ -94,6 +123,15 @@ export const Navbar: React.FC<NavbarProps> = ({
                 >
                   <Download className="w-4 h-4 mr-1.5" />
                   Xuất Báo Cáo Excel
+                </button>
+
+                <button
+                  onClick={onExportImages}
+                  className="inline-flex items-center px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700 transition cursor-pointer shrink-0"
+                  id="btn-export-images"
+                >
+                  <Download className="w-4 h-4 mr-1.5" />
+                  Xuất Folder Ảnh
                 </button>
 
                 <button

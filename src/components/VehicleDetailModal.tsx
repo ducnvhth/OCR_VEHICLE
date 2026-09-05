@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ExtractionRecord } from '../types';
 import { X, ZoomIn, ZoomOut, RotateCcw, Clock, Truck, MapPin, FileText, CheckCircle2, AlertTriangle, Edit2, Save } from 'lucide-react';
+import { formatLicensePlate } from '../utils/dataHelpers';
 
 interface VehicleDetailModalProps {
   record: ExtractionRecord | null;
@@ -9,13 +10,17 @@ interface VehicleDetailModalProps {
   requiredCount?: number;
   totalForPlate?: number;
   uniquePlates?: string[];
+  smartSuggestions?: { plate: string; imageSrc: string }[];
+  allRecords?: ExtractionRecord[];
+  onNavigate?: (record: ExtractionRecord) => void;
 }
 
-export function VehicleDetailModal({ record, onClose, onSave, requiredCount = 4, totalForPlate = 1, uniquePlates = [] }: VehicleDetailModalProps) {
+export function VehicleDetailModal({ record, onClose, onSave, requiredCount = 4, totalForPlate = 1, uniquePlates = [], smartSuggestions = [], allRecords = [], onNavigate }: VehicleDetailModalProps) {
   if (!record) return null;
 
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<ExtractionRecord>({ ...record });
+  const [previewSuggestion, setPreviewSuggestion] = useState<{src: string, plate: string} | null>(null);
 
   // Zoom and Pan states
   const [zoomLevel, setZoomLevel] = useState<number>(1);
@@ -29,7 +34,35 @@ export function VehicleDetailModal({ record, onClose, onSave, requiredCount = 4,
     setFormData({ ...record });
     setZoomLevel(1);
     setPanPosition({ x: 0, y: 0 });
+    setIsEditing(false);
   }, [record]);
+
+  // Keyboard Navigation (ESC, Left, Right)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Bỏ qua nếu đang gõ trong input/textarea
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        onClose();
+      } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        if (!allRecords.length || !onNavigate) return;
+        const currentIndex = allRecords.findIndex(r => r.id === record.id);
+        if (currentIndex === -1) return;
+
+        if (e.key === 'ArrowRight' && currentIndex < allRecords.length - 1) {
+          onNavigate(allRecords[currentIndex + 1]);
+        } else if (e.key === 'ArrowLeft' && currentIndex > 0) {
+          onNavigate(allRecords[currentIndex - 1]);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [record.id, allRecords, onClose, onNavigate]);
 
   // Handle Mouse Wheel Zooming
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
@@ -188,16 +221,26 @@ export function VehicleDetailModal({ record, onClose, onSave, requiredCount = 4,
                 className="w-full h-full flex items-center justify-center"
               >
                 <img
-                  src={formData.imageSrc}
-                  alt={formData.licensePlate}
+                  src={previewSuggestion ? previewSuggestion.src : formData.imageSrc}
+                  alt={previewSuggestion ? previewSuggestion.plate : formData.licensePlate}
                   className="max-w-full max-h-full object-contain pointer-events-none"
                 />
               </div>
 
               {/* Watermark Tag */}
-              <span className="absolute top-3 left-3 px-2.5 py-1 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-md text-xs font-mono font-bold text-amber-400 shadow-md">
-                {formData.licensePlate}
+              <span className={`absolute top-3 left-3 px-2.5 py-1 backdrop-blur border rounded-md text-xs font-mono font-bold shadow-md ${previewSuggestion ? 'bg-indigo-900/80 border-indigo-500 text-indigo-300' : 'bg-slate-900/80 border-slate-700 text-amber-400'}`}>
+                {previewSuggestion ? `Đang xem thử: ${previewSuggestion.plate}` : formData.licensePlate}
               </span>
+
+              {previewSuggestion && (
+                <button
+                  onClick={() => setPreviewSuggestion(null)}
+                  className="absolute top-3 right-3 px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg shadow-lg flex items-center gap-1.5 transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Quay lại ảnh gốc
+                </button>
+              )}
 
               {/* Zoom Controls Overlay Bar */}
               <div className="absolute bottom-3 right-3 flex items-center bg-slate-900/85 backdrop-blur border border-slate-700 rounded-xl p-1 shadow-lg space-x-1 text-white">
@@ -227,6 +270,37 @@ export function VehicleDetailModal({ record, onClose, onSave, requiredCount = 4,
                   100%
                 </button>
               </div>
+              {/* Previous Button overlay */}
+              {allRecords.length > 0 && onNavigate && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const currentIndex = allRecords.findIndex(r => r.id === record.id);
+                    if (currentIndex > 0) onNavigate(allRecords[currentIndex - 1]);
+                  }}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-2 rounded-full backdrop-blur-sm transition z-20 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  disabled={allRecords.findIndex(r => r.id === record.id) <= 0}
+                  title="Ảnh trước (Mũi tên trái)"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+              )}
+
+              {/* Next Button overlay */}
+              {allRecords.length > 0 && onNavigate && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const currentIndex = allRecords.findIndex(r => r.id === record.id);
+                    if (currentIndex < allRecords.length - 1) onNavigate(allRecords[currentIndex + 1]);
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-2 rounded-full backdrop-blur-sm transition z-20 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  disabled={allRecords.findIndex(r => r.id === record.id) >= allRecords.length - 1}
+                  title="Ảnh tiếp (Mũi tên phải)"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                </button>
+              )}
             </div>
 
             <p className="text-[11px] text-slate-500 text-center italic">
@@ -314,14 +388,54 @@ export function VehicleDetailModal({ record, onClose, onSave, requiredCount = 4,
                 
                 <div>
                   <label className="block text-slate-700 font-semibold mb-1">Biển Số Xe</label>
-                  <input
-                    type="text"
-                    value={formData.licensePlate}
-                    list="unique-plates-list"
-                    onChange={(e) => setFormData({ ...formData, licensePlate: e.target.value.toUpperCase() })}
-                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                    required
-                  />
+                  <div className="relative flex items-center">
+                    <input
+                      type="text"
+                      value={formData.licensePlate}
+                      list="unique-plates-list"
+                      onChange={(e) => setFormData({ ...formData, licensePlate: e.target.value.toUpperCase() })}
+                      onBlur={(e) => setFormData({ ...formData, licensePlate: formatLicensePlate(e.target.value) })}
+                      className="w-full bg-white border border-slate-300 rounded-xl pl-3 pr-10 py-2 text-slate-900 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      required
+                    />
+                    {formData.licensePlate && (
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, licensePlate: '' })}
+                        className="absolute right-3 p-1 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-full transition-colors"
+                        title="Xóa biển số xe"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  {smartSuggestions.length > 0 && (
+                    <div className="mt-3">
+                      <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1 mb-2">💡 Gợi ý ảnh cùng thời điểm:</span>
+                      <div className="flex gap-2 overflow-x-auto pb-1.5 snap-x">
+                        {smartSuggestions.map(s => (
+                          <div
+                            key={s.plate}
+                            onClick={() => {
+                              setFormData({ ...formData, licensePlate: s.plate });
+                              setPreviewSuggestion({ src: s.imageSrc, plate: s.plate });
+                              setZoomLevel(1);
+                              setPanPosition({ x: 0, y: 0 });
+                            }}
+                            className="relative flex-none w-28 shrink-0 group rounded-lg overflow-hidden cursor-pointer border-2 border-slate-200 hover:border-blue-500 transition-all bg-slate-900 aspect-[4/3] shadow-sm snap-start"
+                            title="Bấm để chọn và xem ảnh lớn"
+                          >
+                            <img src={s.imageSrc} alt={s.plate} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity pointer-events-none" />
+                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-900/90 to-transparent p-1.5 pt-4">
+                              <span className="block text-center text-amber-400 font-mono font-bold text-[10px]">
+                                {s.plate}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <datalist id="unique-plates-list">
                     {uniquePlates.map((plate) => (
                       <option key={plate} value={plate} />

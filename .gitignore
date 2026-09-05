@@ -6,3 +6,10 @@ coverage/
 *.log
 .env*
 !.env.example
+uploads
+data
+OCR_Vehicle.exe
+OCR_Vehicle.rar
+db.json
+journal.json
+package-lock.json

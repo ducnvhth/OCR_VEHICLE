@@ -1,11 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import { ExtractionRecord } from '../types';
-import { Search, Trash2, Edit3, Maximize2, AlertTriangle, CheckCircle2, Clock, Truck } from 'lucide-react';
+import { Search, Trash2, Edit3, Maximize2, AlertTriangle, CheckCircle2, Clock, Truck, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+
+type SortField = 'licensePlate' | 'timestamp' | 'fileName' | 'confidence' | 'count';
+type SortDirection = 'asc' | 'desc';
 
 interface DataTableProps {
   records: ExtractionRecord[];
-  onSelectRecord: (record: ExtractionRecord) => void;
-  onEditRecord: (record: ExtractionRecord) => void;
+  onSelectRecord: (record: ExtractionRecord, contextList?: ExtractionRecord[]) => void;
+  onEditRecord: (record: ExtractionRecord, contextList?: ExtractionRecord[]) => void;
   onDeleteRecord: (id: string) => void;
   onBatchDelete: (ids: string[]) => void;
   requiredCount?: number;
@@ -22,6 +25,9 @@ export function DataTable({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  
+  const [sortField, setSortField] = useState<SortField>('timestamp');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   // Count photos for each plate
   const plateCounts = useMemo(() => {
@@ -33,9 +39,9 @@ export function DataTable({
     return map;
   }, [records]);
 
-  // Filter records
+  // Filter & Sort records
   const filteredRecords = useMemo(() => {
-    return records.filter((r) => {
+    let result = records.filter((r) => {
       const plate = r.licensePlate.trim().toUpperCase();
       const count = plateCounts.get(plate) || 0;
       const isWarning = count < requiredCount;
@@ -53,7 +59,26 @@ export function DataTable({
         (r.location && r.location.toLowerCase().includes(term))
       );
     });
-  }, [records, searchTerm, selectedStatus, plateCounts, requiredCount]);
+
+    result = result.sort((a, b) => {
+      let aValue: any = a[sortField];
+      let bValue: any = b[sortField];
+
+      if (sortField === 'count') {
+        aValue = plateCounts.get(a.licensePlate.trim().toUpperCase()) || 0;
+        bValue = plateCounts.get(b.licensePlate.trim().toUpperCase()) || 0;
+      } else if (sortField === 'timestamp') {
+        aValue = new Date(a.parsedDateISO).getTime() || 0;
+        bValue = new Date(b.parsedDateISO).getTime() || 0;
+      }
+
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return result;
+  }, [records, searchTerm, selectedStatus, plateCounts, requiredCount, sortField, sortDirection]);
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
@@ -69,6 +94,20 @@ export function DataTable({
     } else {
       setSelectedIds([...selectedIds, id]);
     }
+  };
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('desc');
+    }
+  };
+
+  const renderSortIcon = (field: SortField) => {
+    if (sortField !== field) return <ArrowUpDown className="w-3 h-3 text-slate-300 ml-1" />;
+    return sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-600 ml-1" /> : <ArrowDown className="w-3 h-3 text-blue-600 ml-1" />;
   };
 
   return (
@@ -135,13 +174,23 @@ export function DataTable({
                   className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                 />
               </th>
-              <th className="p-3">Biển kiểm soát</th>
+              <th className="p-3 cursor-pointer hover:bg-slate-200 select-none transition" onClick={() => handleSort('licensePlate')}>
+                <div className="flex items-center">Biển kiểm soát {renderSortIcon('licensePlate')}</div>
+              </th>
               <th className="p-3">Ảnh thu nhỏ</th>
-              <th className="p-3">Thời gian trích xuất</th>
-              <th className="p-3">Tên File</th>
-              <th className="p-3 text-center">Tổng ảnh biển này</th>
+              <th className="p-3 cursor-pointer hover:bg-slate-200 select-none transition" onClick={() => handleSort('timestamp')}>
+                <div className="flex items-center">Thời gian {renderSortIcon('timestamp')}</div>
+              </th>
+              <th className="p-3 cursor-pointer hover:bg-slate-200 select-none transition" onClick={() => handleSort('fileName')}>
+                <div className="flex items-center">Tên File {renderSortIcon('fileName')}</div>
+              </th>
+              <th className="p-3 text-center cursor-pointer hover:bg-slate-200 select-none transition" onClick={() => handleSort('count')}>
+                <div className="flex items-center justify-center">Tổng ảnh {renderSortIcon('count')}</div>
+              </th>
               <th className="p-3 text-center">Trạng thái Cảnh báo</th>
-              <th className="p-3 text-center">Độ tin cậy AI</th>
+              <th className="p-3 text-center cursor-pointer hover:bg-slate-200 select-none transition" onClick={() => handleSort('confidence')}>
+                <div className="flex items-center justify-center">Độ tin cậy AI {renderSortIcon('confidence')}</div>
+              </th>
               <th className="p-3 text-right">Thao tác</th>
             </tr>
           </thead>
@@ -171,14 +220,21 @@ export function DataTable({
                     </td>
 
                     <td className="p-3 font-mono font-bold whitespace-nowrap">
-                      <span className="bg-amber-400 text-slate-950 font-black px-2.5 py-0.5 rounded text-xs border border-slate-900 shadow-xs">
-                        {rec.licensePlate}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="bg-amber-400 text-slate-950 font-black px-2.5 py-0.5 rounded text-xs border border-slate-900 shadow-xs">
+                          {rec.licensePlate}
+                        </span>
+                        {rec.isEdited && (
+                          <span className="bg-blue-100 text-blue-700 p-0.5 rounded shadow-sm border border-blue-200" title="Đã chỉnh sửa thủ công">
+                            <Edit3 className="w-3 h-3" />
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     <td className="p-3">
                       <div
-                        onClick={() => onSelectRecord(rec)}
+                        onClick={() => onSelectRecord(rec, filteredRecords)}
                         className="w-14 h-11 bg-slate-100 border border-slate-200 rounded overflow-hidden cursor-pointer hover:opacity-80 transition relative group"
                         title="Click để phóng to ảnh"
                       >
@@ -227,14 +283,14 @@ export function DataTable({
                     <td className="p-3 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end space-x-1">
                         <button
-                          onClick={() => onSelectRecord(rec)}
+                          onClick={() => onSelectRecord(rec, filteredRecords)}
                           className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-blue-600 transition cursor-pointer"
                           title="Xem phóng to & zoom"
                         >
                           <Maximize2 className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          onClick={() => onEditRecord(rec)}
+                          onClick={() => onEditRecord(rec, filteredRecords)}
                           className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-blue-600 transition cursor-pointer"
                           title="Chỉnh sửa thủ công"
                         >

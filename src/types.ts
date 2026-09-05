@@ -20,10 +20,14 @@ export interface GroupedVehicle {
   records: ExtractionRecord[];
   photoCount: number;
   latestTimestamp: string;
+  earliestTimestamp: string;
   isWarning: boolean;
   requiredCount: number;
   missingCount: number;
   locations: string[];
+  tripIndex: number;       // Lượt thứ mấy (1-based)
+  totalTrips: number;      // Tổng số lượt trong ngày cho biển số này
+  tripDate: string;        // Ngày của lượt (DD/MM/YYYY)
 }
 
 export interface BatchProcessingProgress {
@@ -36,4 +40,10 @@ export interface BatchProcessingProgress {
 export interface ProcessingError {
   fileName: string;
   error: string;
+}
+
+export interface JournalEntry {
+  id: string;
+  stt: string;
+  licensePlate: string;
 }

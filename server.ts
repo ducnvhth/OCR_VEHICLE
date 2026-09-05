@@ -1,10 +1,50 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { GoogleGenAI, Type } from "@google/genai";
-import { createServer as createViteServer } from "vite";
 import * as dotenv from "dotenv";
 
 dotenv.config();
+
+const uploadsDir = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Ensure production mode when running from pkg executable
+if ((process as any).pkg) {
+  process.env.NODE_ENV = "production";
+}
+
+const dbPath = path.join(process.cwd(), "db.json");
+function readDb(): any[] {
+  if (!fs.existsSync(dbPath)) return [];
+  try {
+    const data = JSON.parse(fs.readFileSync(dbPath, "utf-8"));
+    return data.map((record: any) => ({
+      ...record,
+      imageSrc: record.imageSrc || record.imageUrl
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+function writeDb(records: any[]) {
+  fs.writeFileSync(dbPath, JSON.stringify(records, null, 2), "utf-8");
+}
+
+const journalDbPath = path.join(process.cwd(), "journal.json");
+function readJournalDb(): any[] {
+  if (!fs.existsSync(journalDbPath)) return [];
+  try {
+    return JSON.parse(fs.readFileSync(journalDbPath, "utf-8"));
+  } catch (e) {
+    return [];
+  }
+}
+function writeJournalDb(records: any[]) {
+  fs.writeFileSync(journalDbPath, JSON.stringify(records, null, 2), "utf-8");
+}
 
 const app = express();
 const PORT = 3000;
@@ -53,8 +93,205 @@ app.get("/api/health", (req, res) => {
   res.json({
     status: "ok",
     hasApiKey: Boolean(process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY),
+    apiKeysCount: aiClients.length,
     timestamp: new Date().toISOString(),
   });
+});
+
+// Fetch all saved records from DB
+app.get("/api/records", (req, res) => {
+  const records = readDb();
+  res.json({ success: true, records });
+});
+
+// Delete a single record from DB
+app.delete("/api/records/:id", (req, res) => {
+  const id = req.params.id;
+  let records = readDb();
+  records = records.filter(r => r.id !== id);
+  writeDb(records);
+  res.json({ success: true });
+});
+
+// Delete all records
+app.delete("/api/records", (req, res) => {
+  writeDb([]);
+  res.json({ success: true });
+});
+
+// Update a single record
+app.put("/api/records/:id", express.json(), (req, res) => {
+  const id = req.params.id;
+  const updatedData = req.body;
+  let records = readDb();
+  
+  const index = records.findIndex((r: any) => r.id === id);
+  if (index !== -1) {
+    // Preserve imageSrc backward compatibility and merge new data
+    records[index] = { ...records[index], ...updatedData, isEdited: true };
+    writeDb(records);
+    return res.json({ success: true, record: records[index] });
+  }
+  return res.status(404).json({ success: false, error: "Record not found" });
+});
+
+// JOURNAL ENDPOINTS
+app.get("/api/journal", (req, res) => {
+  const records = readJournalDb();
+  res.json({ success: true, records });
+});
+
+app.post("/api/journal", express.json(), (req, res) => {
+  const newEntry = req.body;
+  let records = readJournalDb();
+
+  // Server tự tính STT để tránh race condition từ client
+  const maxStt = records.length > 0
+    ? Math.max(...records.map((r: any) => parseInt(r.stt, 10) || 0))
+    : 0;
+  newEntry.stt = (maxStt + 1).toString();
+
+  records.push(newEntry);
+  writeJournalDb(records);
+  res.json({ success: true, record: newEntry });
+});
+
+app.put("/api/journal/:id", express.json(), (req, res) => {
+  const id = req.params.id;
+  const updatedData = req.body;
+  let records = readJournalDb();
+  
+  const index = records.findIndex((r: any) => r.id === id);
+  if (index !== -1) {
+    records[index] = { ...records[index], ...updatedData };
+    writeJournalDb(records);
+    return res.json({ success: true, record: records[index] });
+  }
+  return res.status(404).json({ success: false, error: "Journal entry not found" });
+});
+
+app.delete("/api/journal/:id", (req, res) => {
+  const id = req.params.id;
+  let records = readJournalDb();
+  records = records.filter(r => r.id !== id);
+  writeJournalDb(records);
+  res.json({ success: true });
+});
+
+// Delete all journal entries
+app.delete("/api/journal", (req, res) => {
+  writeJournalDb([]);
+  res.json({ success: true });
+});
+
+app.post("/api/journal/batch", express.json(), (req, res) => {
+  const { mapping } = req.body;
+  let records = readJournalDb();
+  
+  // Convert mapping (plate -> stt) to array of entries and merge
+  Object.keys(mapping).forEach(plate => {
+    const stt = mapping[plate];
+    const existingIndex = records.findIndex((r: any) => r.licensePlate === plate);
+    if (existingIndex !== -1) {
+      records[existingIndex].stt = stt;
+    } else {
+      records.push({
+        id: "jrn_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
+        licensePlate: plate,
+        stt: stt
+      });
+    }
+  });
+  
+  writeJournalDb(records);
+  res.json({ success: true, records });
+});
+
+// Manual Record Entry Endpoint (no AI)
+app.post("/api/records/manual", async (req, res) => {
+  try {
+    const {
+      imageBase64,
+      mimeType = "image/jpeg",
+      fileName,
+      licensePlate,
+      formattedTime,
+      formattedDate,
+      location,
+      notes,
+    } = req.body;
+
+    if (!licensePlate || !formattedTime || !formattedDate) {
+      return res.status(400).json({ success: false, error: "Biển số, giờ và ngày là bắt buộc." });
+    }
+
+    // Build ISO timestamp for sorting
+    let isoDate = new Date().toISOString();
+    try {
+      const [day, month, year] = formattedDate.split("/");
+      const [hour, minute] = formattedTime.split(":");
+      if (day && month && year && hour && minute) {
+        const dateObj = new Date(
+          parseInt(year, 10),
+          parseInt(month, 10) - 1,
+          parseInt(day, 10),
+          parseInt(hour, 10),
+          parseInt(minute, 10)
+        );
+        if (!isNaN(dateObj.getTime())) {
+          isoDate = dateObj.toISOString();
+        }
+      }
+    } catch (err) {
+      console.warn("Could not parse date format for manual entry", err);
+    }
+
+    // Save image if provided
+    let imageUrl = "";
+    const cleanFileName = fileName
+      ? fileName.replace(/[^a-zA-Z0-9.\-_]/g, "_")
+      : `manual_${Date.now()}.jpg`;
+    const uniqueFileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${cleanFileName}`;
+
+    if (imageBase64) {
+      const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+      const imagePath = path.join(uploadsDir, uniqueFileName);
+      fs.writeFileSync(imagePath, cleanBase64, "base64");
+      imageUrl = `/uploads/${uniqueFileName}`;
+    }
+
+    const normalizedPlate = licensePlate.trim().toUpperCase();
+
+    const record = {
+      id: "rec_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
+      fileName: fileName || uniqueFileName,
+      imageUrl: imageUrl || "",
+      imageSrc: imageUrl || "",
+      licensePlate: normalizedPlate,
+      rawLicensePlate: normalizedPlate,
+      timestamp: `${formattedTime} ${formattedDate}`,
+      formattedTime,
+      formattedDate,
+      parsedDateISO: isoDate,
+      location: location || "",
+      confidence: 100,
+      notes: notes || "Nhập thủ công",
+      processedAt: new Date().toLocaleTimeString("vi-VN"),
+      isManual: true,
+    };
+
+    const dbRecords = readDb();
+    dbRecords.unshift(record);
+    writeDb(dbRecords);
+
+    return res.json({ success: true, record });
+  } catch (error: any) {
+    console.error("Lỗi khi lưu record thủ công:", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "Đã xảy ra lỗi khi lưu dữ liệu.",
+    });
+  }
 });
 
 // Image Analysis Endpoint using Gemini 3.6 Flash
@@ -66,7 +303,20 @@ app.post("/api/analyze-image", async (req, res) => {
       return res.status(400).json({ error: "Thừa số imageBase64 không được bỏ trống." });
     }
 
+    // Check if file already exists in DB
+    const records = readDb();
+    const existingRecord = records.find(r => r.fileName === fileName);
+    if (existingRecord) {
+      console.log(`Bỏ qua OCR cho file [${fileName}] vì đã có trong DB.`);
+      return res.json({ success: true, record: existingRecord });
+    }
+
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+
+    const uniqueFileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${fileName.replace(/[^a-zA-Z0-9.\-_]/g, '_')}`;
+    const imagePath = path.join(uploadsDir, uniqueFileName);
+    fs.writeFileSync(imagePath, cleanBase64, 'base64');
+    const imageUrl = `/uploads/${uniqueFileName}`;
 
     const prompt = `Phân tích chi tiết bức ảnh chụp xe / phương tiện giao thông / xe công trình.
 Nhiệm vụ chính của bạn là trích xuất 2 THÔNG TIN QUAN TRỌNG NHẤT:
@@ -189,6 +439,8 @@ Nhiệm vụ chính của bạn là trích xuất 2 THÔNG TIN QUAN TRỌNG NH�
     const record = {
       id: "rec_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
       fileName,
+      imageUrl,
+      imageSrc: imageUrl,
       licensePlate: result.licensePlate || "Chưa rõ biển số",
       rawLicensePlate: result.rawLicensePlate || result.licensePlate || "",
       timestamp: `${result.formattedTime || "17:00"} ${result.formattedDate || "23/07/2026"}`,
@@ -200,6 +452,11 @@ Nhiệm vụ chính của bạn là trích xuất 2 THÔNG TIN QUAN TRỌNG NH�
       notes: result.notes || "Trích xuất biển số & thời gian thành công",
       processedAt: new Date().toLocaleTimeString("vi-VN"),
     };
+
+    // Save to DB
+    const dbRecords = readDb();
+    dbRecords.unshift(record);
+    writeDb(dbRecords);
 
     return res.json({ success: true, record });
   } catch (error: any) {
@@ -213,17 +470,22 @@ Nhiệm vụ chính của bạn là trích xuất 2 THÔNG TIN QUAN TRỌNG NH�
 
 // Start Express and integrate Vite
 async function startServer() {
+  app.use('/uploads', express.static(uploadsDir));
+  
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = require("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    // Sử dụng __dirname thay vì process.cwd() để khi đóng gói .exe bằng pkg, 
+    // express vẫn tìm thấy thư mục dist/ nằm gọn bên trong file .exe
+    const distPath = __dirname;
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+      res.sendFile(path.join(__dirname, "index.html"));
     });
   }
 
