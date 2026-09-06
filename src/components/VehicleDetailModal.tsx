@@ -117,10 +117,35 @@ export function VehicleDetailModal({ record, onClose, onSave, requiredCount = 4,
     setPanPosition({ x: 0, y: 0 });
   };
 
+  // Helper: tính lại parsedDateISO từ formattedTime và formattedDate
+  const recalcParsedDateISO = (time: string, date: string): string => {
+    try {
+      const [day, month, year] = date.split('/');
+      const [hour, minute] = time.split(':');
+      if (day && month && year && hour && minute) {
+        const dateObj = new Date(
+          parseInt(year, 10),
+          parseInt(month, 10) - 1,
+          parseInt(day, 10),
+          parseInt(hour, 10),
+          parseInt(minute, 10)
+        );
+        if (!isNaN(dateObj.getTime())) {
+          return dateObj.toISOString();
+        }
+      }
+    } catch (err) {
+      // fallback
+    }
+    return new Date().toISOString();
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (onSave) {
-      onSave({ ...formData, isEdited: true });
+      // Đảm bảo parsedDateISO được cập nhật theo giờ/ngày đã sửa
+      const updatedISO = recalcParsedDateISO(formData.formattedTime, formData.formattedDate);
+      onSave({ ...formData, parsedDateISO: updatedISO, isEdited: true });
     }
     setIsEditing(false);
   };
@@ -455,6 +480,7 @@ export function VehicleDetailModal({ record, onClose, onSave, requiredCount = 4,
                           ...formData,
                           formattedTime: newTime,
                           timestamp: `${newTime} ${formData.formattedDate}`,
+                          parsedDateISO: recalcParsedDateISO(newTime, formData.formattedDate),
                         });
                       }}
                       className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
@@ -472,6 +498,7 @@ export function VehicleDetailModal({ record, onClose, onSave, requiredCount = 4,
                           ...formData,
                           formattedDate: newDate,
                           timestamp: `${formData.formattedTime} ${newDate}`,
+                          parsedDateISO: recalcParsedDateISO(formData.formattedTime, newDate),
                         });
                       }}
                       className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"

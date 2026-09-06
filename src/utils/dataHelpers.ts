@@ -380,7 +380,8 @@ export async function exportJournalXlsx(entries: any[], records?: ExtractionReco
   worksheet.columns = [
     { header: 'STT', key: 'stt', width: 10 },
     { header: 'Biển số xe', key: 'plate', width: 25 },
-    { header: 'Thời gian', key: 'time', width: 25 },
+    { header: 'Ngày', key: 'date', width: 15 },
+    { header: 'Giờ', key: 'time', width: 15 },
   ];
 
   const headerRow = worksheet.getRow(1);
@@ -396,22 +397,28 @@ export async function exportJournalXlsx(entries: any[], records?: ExtractionReco
   });
 
   entries.forEach((entry, i) => {
-    let timeStr = '';
-    if (records) {
+    let dateStr = entry.dateStr || '';
+    let timeStr = entry.timeStr || '';
+    
+    if (records && !entry.dateStr && !entry.timeStr) {
       const tripsForPlate = grouped.filter(g => g.licensePlate === entry.licensePlate);
       const allEntriesForPlate = entries.filter(e => e.licensePlate === entry.licensePlate);
       const entryIndex = allEntriesForPlate.findIndex(e => e.id === entry.id);
       
       if (entryIndex >= 0 && entryIndex < tripsForPlate.length) {
         const trip = tripsForPlate[entryIndex];
-        // tripDate is formattedDate, earliestTimestamp has both time and date
-        timeStr = trip.earliestTimestamp || '';
+        const earliestRec = trip.records[trip.records.length - 1]; // displaySorted is newest-first, so last is earliest
+        if (earliestRec) {
+          dateStr = earliestRec.formattedDate;
+          timeStr = earliestRec.formattedTime;
+        }
       }
     }
 
     worksheet.addRow({
       stt: entry.stt,
       plate: entry.licensePlate,
+      date: dateStr,
       time: timeStr,
     });
     

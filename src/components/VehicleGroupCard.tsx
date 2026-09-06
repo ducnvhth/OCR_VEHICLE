@@ -1,12 +1,13 @@
 import React from 'react';
 import { GroupedVehicle, ExtractionRecord } from '../types';
-import { AlertTriangle, CheckCircle2, Clock, Maximize2, Trash2, Calendar, FileText, Edit3, Copy } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, Maximize2, Trash2, Calendar, FileText, Edit3, Copy, Plus } from 'lucide-react';
 
 interface VehicleGroupCardProps {
   group: GroupedVehicle;
   onSelectRecord: (record: ExtractionRecord, groupTotal: number, contextList?: ExtractionRecord[]) => void;
   onDeleteRecord?: (id: string) => void;
   onDeleteGroup?: (recordIds: string[], plate: string, tripIdx: number) => void;
+  onAddImages?: (files: File[], plate: string, tripRecords: ExtractionRecord[]) => void;
 }
 
 export const VehicleGroupCard: React.FC<VehicleGroupCardProps> = ({
@@ -14,11 +15,13 @@ export const VehicleGroupCard: React.FC<VehicleGroupCardProps> = ({
   onSelectRecord,
   onDeleteRecord,
   onDeleteGroup,
+  onAddImages,
 }) => {
   const { licensePlate, records, photoCount, isWarning, requiredCount, missingCount, latestTimestamp, earliestTimestamp, tripIndex, totalTrips } = group;
 
   const [isCopying, setIsCopying] = React.useState(false);
   const [toastMsg, setToastMsg] = React.useState<string | null>(null);
+  const addImageInputRef = React.useRef<HTMLInputElement>(null);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -114,6 +117,30 @@ export const VehicleGroupCard: React.FC<VehicleGroupCardProps> = ({
           >
             {isCopying ? <Clock className="w-5 h-5 animate-spin" /> : <Copy className="w-5 h-5" />}
           </button>
+          {onAddImages && (
+            <>
+              <input
+                ref={addImageInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    onAddImages(Array.from(e.target.files), licensePlate, records);
+                    e.target.value = ''; // Reset to allow re-selecting same files
+                  }
+                }}
+              />
+              <button
+                onClick={() => addImageInputRef.current?.click()}
+                className="p-2 bg-white hover:bg-emerald-50 text-emerald-600 rounded-lg border border-slate-200 hover:border-emerald-300 transition flex items-center justify-center shadow-sm shrink-0"
+                title="Thêm ảnh vào lượt này"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+            </>
+          )}
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-bold text-slate-900 text-sm sm:text-base">Biển kiểm soát</span>

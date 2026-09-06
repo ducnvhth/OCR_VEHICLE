@@ -219,6 +219,7 @@ app.post("/api/records/manual", async (req, res) => {
       formattedDate,
       location,
       notes,
+      parsedDateISO,
     } = req.body;
 
     if (!licensePlate || !formattedTime || !formattedDate) {
@@ -226,24 +227,27 @@ app.post("/api/records/manual", async (req, res) => {
     }
 
     // Build ISO timestamp for sorting
-    let isoDate = new Date().toISOString();
-    try {
-      const [day, month, year] = formattedDate.split("/");
-      const [hour, minute] = formattedTime.split(":");
-      if (day && month && year && hour && minute) {
-        const dateObj = new Date(
-          parseInt(year, 10),
-          parseInt(month, 10) - 1,
-          parseInt(day, 10),
-          parseInt(hour, 10),
-          parseInt(minute, 10)
-        );
-        if (!isNaN(dateObj.getTime())) {
-          isoDate = dateObj.toISOString();
+    let isoDate = parsedDateISO;
+    if (!isoDate) {
+      isoDate = new Date().toISOString();
+      try {
+        const [day, month, year] = formattedDate.split("/");
+        const [hour, minute] = formattedTime.split(":");
+        if (day && month && year && hour && minute) {
+          const dateObj = new Date(
+            parseInt(year, 10),
+            parseInt(month, 10) - 1,
+            parseInt(day, 10),
+            parseInt(hour, 10),
+            parseInt(minute, 10)
+          );
+          if (!isNaN(dateObj.getTime())) {
+            isoDate = dateObj.toISOString();
+          }
         }
+      } catch (err) {
+        console.warn("Could not parse date format for manual entry", err);
       }
-    } catch (err) {
-      console.warn("Could not parse date format for manual entry", err);
     }
 
     // Save image if provided
@@ -473,7 +477,7 @@ async function startServer() {
   app.use('/uploads', express.static(uploadsDir));
   
   if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = require("vite");
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

@@ -14,9 +14,10 @@ interface ImageItem {
 interface ManualEntryModalProps {
   onClose: () => void;
   onSaved: (records: any[]) => void;
+  uniquePlates?: string[];
 }
 
-export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({ onClose, onSaved }) => {
+export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({ onClose, onSaved, uniquePlates = [] }) => {
   const now = new Date();
   const todayDate = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
   const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -198,12 +199,21 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({ onClose, onS
                   id="global-plate"
                   type="text"
                   value={globalPlate}
+                  list="manual-unique-plates-list"
                   onChange={e => setGlobalPlate(e.target.value.toUpperCase())}
                   onBlur={e => setGlobalPlate(formatLicensePlate(e.target.value))}
                   placeholder="VD: 38A-755.25 — để trống nếu mỗi ảnh có biển số riêng"
                   className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold text-slate-800 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition uppercase"
                   autoFocus
                 />
+                <datalist id="manual-unique-plates-list">
+                  {uniquePlates.map((plate) => (
+                    <React.Fragment key={plate}>
+                      <option value={plate} />
+                      <option value={plate.replace(/[^A-Z0-9]/ig, '')} />
+                    </React.Fragment>
+                  ))}
+                </datalist>
               </div>
 
               {/* Date & Time */}
@@ -327,6 +337,7 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({ onClose, onS
                             type="text"
                             value={img.plate}
                             autoFocus
+                            list="manual-unique-plates-list"
                             onChange={e => updatePlate(img.id, e.target.value.toUpperCase())}
                             onBlur={() => {
                               updatePlate(img.id, formatLicensePlate(img.plate));

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { JournalEntry } from '../types';
-import { Plus, Trash2, Edit2, Save, X, Database, Download } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Database, Download, ChevronUp, ChevronDown } from 'lucide-react';
 import { formatLicensePlate } from '../utils/dataHelpers';
 
 interface JournalManagerProps {
@@ -9,7 +9,7 @@ interface JournalManagerProps {
   onUpdate: (id: string, entry: Partial<JournalEntry>) => void;
   onDelete: (id: string) => void;
   onDeleteAll: () => void;
-  onExport: () => void;
+  onExport: (sortedEntries?: any[]) => void;
   groupedVehicles?: any[];
 }
 
@@ -22,6 +22,9 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
   onExport,
   groupedVehicles = [],
 }) => {
+  type SortKey = 'stt' | 'licensePlate' | 'date' | 'time' | 'photoCount';
+  const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' } | null>(null);
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<{ stt: string; licensePlate: string }>({ stt: '', licensePlate: '' });
   
@@ -36,6 +39,89 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
     }
     setAddForm({ stt: nextStt.toString(), licensePlate: '' });
     setIsAdding(true);
+  };
+
+  const enrichedEntries = useMemo(() => {
+    return journalEntries.map((entry) => {
+      const tripsForPlate = groupedVehicles.filter(g => g.licensePlate === entry.licensePlate);
+      const allEntriesForPlate = journalEntries.filter(e => e.licensePlate === entry.licensePlate);
+      const entryIndex = allEntriesForPlate.findIndex(e => e.id === entry.id);
+
+      let dateStr = '-';
+      let timeStr = '-';
+      let parsedDateISO = '';
+      let photoCount = 0;
+      let requiredCount = 0;
+      let isWarning = false;
+
+      if (entryIndex >= 0 && entryIndex < tripsForPlate.length) {
+        const trip = tripsForPlate[entryIndex];
+        const earliestRec = trip.records[trip.records.length - 1]; // newest-first sorting in dataHelpers
+        if (earliestRec) {
+          dateStr = earliestRec.formattedDate;
+          timeStr = earliestRec.formattedTime;
+          parsedDateISO = earliestRec.parsedDateISO;
+        }
+        photoCount = trip.photoCount;
+        requiredCount = trip.requiredCount;
+        isWarning = trip.isWarning;
+      }
+
+      return {
+        ...entry,
+        dateStr,
+        timeStr,
+        parsedDateISO,
+        photoCount,
+        requiredCount,
+        isWarning
+      };
+    });
+  }, [journalEntries, groupedVehicles]);
+
+  const sortedEntries = useMemo(() => {
+    const sortableItems = [...enrichedEntries];
+    if (sortConfig !== null) {
+      sortableItems.sort((a, b) => {
+        if (sortConfig.key === 'stt') {
+          const aStt = parseInt(a.stt, 10) || 0;
+          const bStt = parseInt(b.stt, 10) || 0;
+          return sortConfig.direction === 'asc' ? aStt - bStt : bStt - aStt;
+        }
+        if (sortConfig.key === 'licensePlate') {
+          const aVal = a.licensePlate;
+          const bVal = b.licensePlate;
+          if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+          if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+          return 0;
+        }
+        if (sortConfig.key === 'date' || sortConfig.key === 'time') {
+          const aTime = new Date(a.parsedDateISO || 0).getTime();
+          const bTime = new Date(b.parsedDateISO || 0).getTime();
+          return sortConfig.direction === 'asc' ? aTime - bTime : bTime - aTime;
+        }
+        if (sortConfig.key === 'photoCount') {
+          return sortConfig.direction === 'asc' ? a.photoCount - b.photoCount : b.photoCount - a.photoCount;
+        }
+        return 0;
+      });
+    }
+    return sortableItems;
+  }, [enrichedEntries, sortConfig]);
+
+  const requestSort = (key: SortKey) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  const renderSortIcon = (key: SortKey) => {
+    if (sortConfig?.key !== key) return <ChevronUp className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100" />;
+    return sortConfig.direction === 'asc' 
+      ? <ChevronUp className="w-3 h-3 text-blue-600" />
+      : <ChevronDown className="w-3 h-3 text-blue-600" />;
   };
 
   const handleEditClick = (entry: JournalEntry) => {
@@ -73,7 +159,7 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
           {journalEntries.length > 0 && (
             <>
               <button
-                onClick={onExport}
+                onClick={() => onExport(sortedEntries)}
                 className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition shadow-sm border border-emerald-200"
               >
                 <Download className="w-4 h-4 mr-1" />
@@ -100,11 +186,23 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
 
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm text-slate-600">
-          <thead className="text-xs uppercase bg-slate-100 text-slate-500 font-semibold">
+          <thead className="text-xs uppercase bg-slate-100 text-slate-500 font-semibold select-none">
             <tr>
-              <th className="px-6 py-3 w-32">STT</th>
-              <th className="px-6 py-3">Biển Số Xe</th>
-              <th className="px-6 py-3">Thời gian</th>
+              <th className="px-6 py-3 w-32 cursor-pointer hover:bg-slate-200 transition group" onClick={() => requestSort('stt')}>
+                <div className="flex items-center space-x-1"><span>STT</span> {renderSortIcon('stt')}</div>
+              </th>
+              <th className="px-6 py-3 cursor-pointer hover:bg-slate-200 transition group" onClick={() => requestSort('licensePlate')}>
+                <div className="flex items-center space-x-1"><span>Biển Số Xe</span> {renderSortIcon('licensePlate')}</div>
+              </th>
+              <th className="px-6 py-3 cursor-pointer hover:bg-slate-200 transition group" onClick={() => requestSort('date')}>
+                <div className="flex items-center space-x-1"><span>Ngày</span> {renderSortIcon('date')}</div>
+              </th>
+              <th className="px-6 py-3 cursor-pointer hover:bg-slate-200 transition group" onClick={() => requestSort('time')}>
+                <div className="flex items-center space-x-1"><span>Giờ</span> {renderSortIcon('time')}</div>
+              </th>
+              <th className="px-6 py-3 text-center cursor-pointer hover:bg-slate-200 transition group" onClick={() => requestSort('photoCount')}>
+                <div className="flex items-center justify-center space-x-1"><span>Số lượng ảnh</span> {renderSortIcon('photoCount')}</div>
+              </th>
               <th className="px-6 py-3 w-40 text-right">Thao tác</th>
             </tr>
           </thead>
@@ -133,6 +231,12 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
                 <td className="px-6 py-3 text-slate-400 text-sm italic">
                   (Sẽ tự động điền)
                 </td>
+                <td className="px-6 py-3 text-slate-400 text-sm italic">
+                  (Sẽ tự động điền)
+                </td>
+                <td className="px-6 py-3 text-center text-slate-400 text-sm italic">
+                  -
+                </td>
                 <td className="px-6 py-3 text-right space-x-2">
                   <button onClick={handleSaveAdd} className="p-1.5 text-emerald-600 hover:bg-emerald-100 rounded-lg transition" title="Lưu">
                     <Save className="w-4 h-4" />
@@ -146,22 +250,13 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
             
             {journalEntries.length === 0 && !isAdding && (
               <tr>
-                <td colSpan={4} className="px-6 py-8 text-center text-slate-500">
+                <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
                   Chưa có dữ liệu nhật trình. Bạn có thể thêm thủ công hoặc upload file Excel.
                 </td>
               </tr>
             )}
 
-            {journalEntries.map((entry) => {
-              const tripsForPlate = groupedVehicles.filter(g => g.licensePlate === entry.licensePlate);
-              const allEntriesForPlate = journalEntries.filter(e => e.licensePlate === entry.licensePlate);
-              const entryIndex = allEntriesForPlate.findIndex(e => e.id === entry.id);
-              
-              let timeStr = '-';
-              if (entryIndex >= 0 && entryIndex < tripsForPlate.length) {
-                timeStr = tripsForPlate[entryIndex].earliestTimestamp || '-';
-              }
-
+            {sortedEntries.map((entry) => {
               return (
               <tr key={entry.id} className="hover:bg-slate-50/80 transition group">
                 {editingId === entry.id ? (
@@ -184,7 +279,13 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
                       />
                     </td>
                     <td className="px-6 py-3 text-slate-500 text-sm">
-                      {timeStr}
+                      {entry.dateStr}
+                    </td>
+                    <td className="px-6 py-3 text-slate-500 text-sm">
+                      {entry.timeStr}
+                    </td>
+                    <td className="px-6 py-3 text-center text-slate-500 text-sm font-medium">
+                      {entry.photoCount > 0 ? `${entry.photoCount}/${entry.requiredCount}` : '-'}
                     </td>
                     <td className="px-6 py-3 text-right space-x-2">
                       <button onClick={() => handleSaveEdit(entry.id)} className="p-1.5 text-emerald-600 hover:bg-emerald-100 rounded-lg transition" title="Lưu">
@@ -199,8 +300,18 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
                   <>
                     <td className="px-6 py-3 font-semibold text-slate-700">{entry.stt}</td>
                     <td className="px-6 py-3 font-mono text-blue-600">{entry.licensePlate}</td>
-                    <td className="px-6 py-3 text-sm text-slate-600 font-medium">{timeStr}</td>
-                    <td className="px-6 py-3 text-right opacity-0 group-hover:opacity-100 transition-opacity space-x-1">
+                    <td className="px-6 py-3 text-sm text-slate-600 font-medium">{entry.dateStr}</td>
+                    <td className="px-6 py-3 text-sm text-slate-600 font-medium">{entry.timeStr}</td>
+                    <td className="px-6 py-3 text-center">
+                      {entry.photoCount > 0 ? (
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${entry.isWarning ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                          {entry.photoCount}/{entry.requiredCount}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 text-sm">-</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-3 text-right space-x-1">
                       <button onClick={() => handleEditClick(entry)} className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-lg transition" title="Sửa">
                         <Edit2 className="w-4 h-4" />
                       </button>

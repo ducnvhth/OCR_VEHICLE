@@ -196,6 +196,23 @@ export function App() {
     }
   };
 
+  // Hàm xóa journal entries thừa cho 1 biển số cụ thể (dùng khi xóa lượt/ảnh)
+  const removeExcessJournalEntries = (plate: string, remainingRecords: ExtractionRecord[]) => {
+    const groups = groupRecordsByLicensePlate(remainingRecords, minPhotoThreshold, tripGapMinutes);
+    const expectedTripCount = groups.filter(g => g.licensePlate === plate).length;
+    
+    const journalForPlate = journalEntries.filter(e => e.licensePlate === plate);
+    
+    if (journalForPlate.length > expectedTripCount) {
+      // Xóa từ cuối lên (LIFO) — xóa các entry thừa
+      const toDelete = journalForPlate.slice(expectedTripCount);
+      toDelete.forEach(entry => {
+        fetch(`/api/journal/${entry.id}`, { method: 'DELETE' }).catch(console.error);
+      });
+      setJournalEntries(prev => prev.filter(e => !toDelete.some(d => d.id === e.id)));
+    }
+  };
+
   // Tự động đồng bộ nhật trình với số lượt (trips) thực tế trên UI
   useEffect(() => {
     // Chỉ chạy khi đã load xong dữ liệu
@@ -213,6 +230,8 @@ export function App() {
 
     // So sánh với journal hiện tại
     const missingPlates: string[] = [];
+    const excessEntries: any[] = [];
+
     Object.keys(tripCounts).forEach(plate => {
       const expectedCount = tripCounts[plate];
       const actualCount = journalEntries.filter(e => e.licensePlate === plate).length;
@@ -222,10 +241,29 @@ export function App() {
           missingPlates.push(plate);
         }
       }
+      if (actualCount > expectedCount) {
+        // Xóa các dòng thừa (từ cuối)
+        const entries = journalEntries.filter(e => e.licensePlate === plate);
+        excessEntries.push(...entries.slice(expectedCount));
+      }
+    });
+
+    // Xóa journal entries của biển số không còn tồn tại trong records
+    const allPlatesInRecords = new Set(Object.keys(tripCounts));
+    journalEntries.forEach(entry => {
+      if (!allPlatesInRecords.has(entry.licensePlate)) {
+        excessEntries.push(entry);
+      }
     });
 
     if (missingPlates.length > 0) {
       autoAppendToJournal(missingPlates);
+    }
+    if (excessEntries.length > 0) {
+      excessEntries.forEach(entry => {
+        fetch(`/api/journal/${entry.id}`, { method: 'DELETE' }).catch(console.error);
+      });
+      setJournalEntries(prev => prev.filter(e => !excessEntries.some(d => d.id === e.id)));
     }
   }, [records, minPhotoThreshold, tripGapMinutes, journalEntries.length]);
 
@@ -352,8 +390,9 @@ export function App() {
     downloadImagesZip(records, journalMapping, tripGapMinutes);
   };
 
-  const handleExportJournal = () => {
-    exportJournalXlsx(journalEntries, records, tripGapMinutes);
+  const handleExportJournal = (sortedEntries?: any[]) => {
+    const entriesToExport = sortedEntries && sortedEntries.length > 0 ? sortedEntries : journalEntries;
+    exportJournalXlsx(entriesToExport, records, tripGapMinutes);
   };
 
   const handleUploadJournal = async (file: File) => {
@@ -501,19 +540,105 @@ export function App() {
 
   const handleDeleteRecord = (id: string) => {
     fetch(`/api/records/${id}`, { method: 'DELETE' }).catch(console.error);
-    setRecords((prev) => prev.filter((r) => r.id !== id));
+    // Tìm biển số của record bị xóa để đồng bộ journal
+    const deletedRecord = records.find(r => r.id === id);
+    const newRecords = records.filter((r) => r.id !== id);
+    setRecords(newRecords);
+    if (deletedRecord) {
+      removeExcessJournalEntries(deletedRecord.licensePlate.trim().toUpperCase(), newRecords);
+    }
   };
 
   const handleDeleteGroup = (recordIds: string[], plate: string, tripIdx: number) => {
     if (window.confirm(`Bạn có chắc muốn xóa lượt ${tripIdx} của biển số ${plate}?`)) {
       recordIds.forEach(id => fetch(`/api/records/${id}`, { method: 'DELETE' }).catch(console.error));
-      setRecords((prev) => prev.filter((r) => !recordIds.includes(r.id)));
+      const newRecords = records.filter((r) => !recordIds.includes(r.id));
+      setRecords(newRecords);
+      // Đồng bộ journal: xóa entry thừa cho biển số này
+      removeExcessJournalEntries(plate, newRecords);
     }
   };
 
   const handleBatchDelete = (ids: string[]) => {
     ids.forEach(id => fetch(`/api/records/${id}`, { method: 'DELETE' }).catch(console.error));
     setRecords((prev) => prev.filter((r) => !ids.includes(r.id)));
+  };
+
+  // Thêm ảnh vào lượt đã có sẵn của 1 biển số (Bỏ qua AI, thêm trực tiếp vào cùng thời gian)
+  const handleAddImagesToGroup = async (files: File[], plate: string, tripRecords: ExtractionRecord[]) => {
+    if (files.length === 0 || tripRecords.length === 0) return;
+
+    // Lấy mốc thời gian của ảnh đầu tiên trong lượt này làm gốc
+    const baseRecord = tripRecords[0];
+
+    // Lọc file trùng tên
+    const existingFileNames = new Set(records.map(r => r.fileName));
+    const filesToProcess = files.filter(f => !existingFileNames.has(f.name));
+    if (filesToProcess.length === 0) {
+      alert("Tất cả các ảnh bạn chọn đã được xử lý trước đó (trùng tên file).");
+      return;
+    }
+
+    setProgress({
+      total: filesToProcess.length,
+      completed: 0,
+      currentFileName: filesToProcess[0].name,
+      isProcessing: true,
+    });
+    setErrors([]);
+
+    const newProcessedRecords: ExtractionRecord[] = [];
+
+    for (let i = 0; i < filesToProcess.length; i++) {
+      const file = filesToProcess[i];
+      setProgress((prev) => ({
+        ...prev,
+        completed: i,
+        currentFileName: `Đang thêm vào ${plate}: ${file.name}`,
+      }));
+
+      try {
+        const base64 = await fileToBase64(file);
+
+        const response = await fetch('/api/records/manual', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageBase64: base64,
+            mimeType: file.type || 'image/jpeg',
+            fileName: file.name,
+            licensePlate: plate,
+            formattedTime: baseRecord.formattedTime,
+            formattedDate: baseRecord.formattedDate,
+            parsedDateISO: baseRecord.parsedDateISO,
+            location: baseRecord.location,
+            notes: "Bổ sung ảnh thủ công vào lượt",
+          }),
+        });
+
+        const data = await response.json();
+
+        if (data.success && data.record) {
+          newProcessedRecords.push(data.record);
+        } else {
+          throw new Error(data.error || "Lỗi lưu file");
+        }
+      } catch (err: any) {
+        console.error('Lỗi khi xử lý file:', file.name, err);
+        setErrors((prev) => [...prev, { fileName: file.name, error: err?.message || 'Không thể đọc file' }]);
+      }
+    }
+
+    setProgress({
+      total: filesToProcess.length,
+      completed: filesToProcess.length,
+      currentFileName: '',
+      isProcessing: false,
+    });
+
+    if (newProcessedRecords.length > 0) {
+      setRecords((prev) => [...newProcessedRecords, ...prev]);
+    }
   };
 
   const warningPlatesList = useMemo(() => {
@@ -703,20 +828,25 @@ export function App() {
                 {(() => {
                   const uniquePlates = Array.from(new Set(groupedVehicles.map(g => g.licensePlate))).sort();
                   return (
-                    <select
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-lg pl-3 pr-8 py-1.5 text-sm font-mono text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-xs transition appearance-none cursor-pointer"
-                    >
-                      <option value="" className="font-sans text-slate-600 font-medium">Tất cả ({uniquePlates.length})</option>
-                      {uniquePlates.map(plate => (
-                        <option key={plate} value={plate}>{plate}</option>
-                      ))}
-                    </select>
+                    <>
+                      <input
+                        type="text"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        placeholder={`Tìm biển số... (${uniquePlates.length})`}
+                        list="search-plate-list"
+                        className="w-full bg-white border border-slate-200 rounded-lg pl-3 pr-8 py-1.5 text-sm font-mono text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-xs transition"
+                      />
+                      <datalist id="search-plate-list">
+                        {uniquePlates.map(plate => (
+                          <option key={plate} value={plate} />
+                        ))}
+                      </datalist>
+                    </>
                   );
                 })()}
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
-                  <ChevronDown className="w-4 h-4 text-slate-400" />
+                  <Search className="w-4 h-4 text-slate-400" />
                 </div>
               </div>
               
@@ -786,6 +916,7 @@ export function App() {
                     }}
                     onDeleteRecord={handleDeleteRecord}
                     onDeleteGroup={(ids, plate, tripIdx) => handleDeleteGroup(ids, plate, tripIdx)}
+                    onAddImages={handleAddImagesToGroup}
                   />
                 ))}
               </div>
@@ -853,6 +984,7 @@ export function App() {
         <ManualEntryModal
           onClose={() => setShowManualEntry(false)}
           onSaved={handleManualEntry}
+          uniquePlates={Array.from(new Set(records.map(r => r.licensePlate).filter(Boolean)))}
         />
       )}
 
