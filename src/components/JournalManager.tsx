@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { JournalEntry } from '../types';
-import { Plus, Trash2, Edit2, Save, X, Database, Download, ChevronUp, ChevronDown } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Database, Download, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
 import { formatLicensePlate } from '../utils/dataHelpers';
 
 interface JournalManagerProps {
@@ -10,6 +10,7 @@ interface JournalManagerProps {
   onDelete: (id: string) => void;
   onDeleteAll: () => void;
   onExport: (sortedEntries?: any[]) => void;
+  onBatchUpdateStt: (updates: { id: string; stt: string }[]) => void;
   groupedVehicles?: any[];
 }
 
@@ -20,6 +21,7 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
   onDelete,
   onDeleteAll,
   onExport,
+  onBatchUpdateStt,
   groupedVehicles = [],
 }) => {
   type SortKey = 'stt' | 'licensePlate' | 'date' | 'time' | 'photoCount';
@@ -158,6 +160,24 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
         <div className="flex items-center space-x-3">
           {journalEntries.length > 0 && (
             <>
+              {sortConfig && (
+                <button
+                  onClick={() => {
+                    if (window.confirm('Cập nhật lại STT theo thứ tự đang hiển thị? Thao tác này sẽ đánh số lại toàn bộ STT từ 1.')) {
+                      const updates = sortedEntries.map((entry, idx) => ({
+                        id: entry.id,
+                        stt: (idx + 1).toString(),
+                      }));
+                      onBatchUpdateStt(updates);
+                      setSortConfig(null);
+                    }
+                  }}
+                  className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-semibold bg-amber-50 hover:bg-amber-100 text-amber-700 transition shadow-sm border border-amber-200"
+                >
+                  <RefreshCw className="w-4 h-4 mr-1" />
+                  Cập nhật STT
+                </button>
+              )}
               <button
                 onClick={() => onExport(sortedEntries)}
                 className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition shadow-sm border border-emerald-200"

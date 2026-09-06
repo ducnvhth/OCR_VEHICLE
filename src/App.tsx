@@ -510,6 +510,36 @@ export function App() {
     }
   };
 
+  const handleBatchUpdateStt = async (updates: { id: string; stt: string }[]) => {
+    try {
+      // Update each entry's STT on the backend
+      const promises = updates.map(({ id, stt }) =>
+        fetch(`/api/journal/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stt }),
+        }).then(res => res.json())
+      );
+      const results = await Promise.all(promises);
+      
+      // Build a map of updated records from server responses
+      const updatedMap = new Map<string, any>();
+      results.forEach((data) => {
+        if (data.success && data.record) {
+          updatedMap.set(data.record.id, data.record);
+        }
+      });
+
+      // Update local state
+      setJournalEntries(prev =>
+        prev.map(entry => updatedMap.has(entry.id) ? updatedMap.get(entry.id) : entry)
+      );
+    } catch (err) {
+      console.error('L\u1ed7i khi c\u1eadp nh\u1eadt STT h\u00e0ng lo\u1ea1t:', err);
+      alert('C\u00f3 l\u1ed7i x\u1ea3y ra khi c\u1eadp nh\u1eadt STT. Vui l\u00f2ng th\u1eed l\u1ea1i.');
+    }
+  };
+
   const handleSaveRecord = (updated: ExtractionRecord) => {
     fetch(`/api/records/${updated.id}`, {
       method: 'PUT',
@@ -964,7 +994,8 @@ export function App() {
             onUpdate={handleUpdateJournal}
             onDelete={handleDeleteJournal}
             onDeleteAll={handleDeleteAllJournal}
-            onExport={() => exportJournalXlsx(journalEntries, records, tripGapMinutes)}
+            onExport={handleExportJournal}
+            onBatchUpdateStt={handleBatchUpdateStt}
             groupedVehicles={groupedVehicles}
           />
         )}
