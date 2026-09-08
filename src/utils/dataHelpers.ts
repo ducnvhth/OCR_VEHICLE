@@ -6,27 +6,59 @@ import JSZip from 'jszip';
 export function formatLicensePlate(plate: string): string {
   if (!plate) return plate;
   
-  const raw = plate.replace(/[^A-Z0-9]/ig, '').toUpperCase();
+  // Clean all characters except A-Z, 0-9, and hyphen/dot
+  const raw = plate.toUpperCase();
+
+  // Helper to format a single standard plate
+  const formatSingle = (p: string) => {
+    const clean = p.replace(/[^A-Z0-9]/ig, '');
+    let match = clean.match(/^(\d{2}[A-Z]{1,2})(\d{3})(\d{2})$/);
+    if (match) return `${match[1]}-${match[2]}.${match[3]}`;
+    match = clean.match(/^(\d{2}[A-Z]{1,2})(\d{4})$/);
+    if (match) return `${match[1]}-${match[2]}`;
+    match = clean.match(/^([A-Z]{2})(\d{2})(\d{2})$/);
+    if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+    return p.replace(/[^A-Z0-9\-.]/ig, ''); // Keep hyphens/dots if no match
+  };
+
+  // If the user inputs a tractor-trailer separated by space or hyphen (e.g., "38H06043 38RM00803" or "38H06043-38RM00803")
+  // We can try to format the whole string first. If it's a standard single plate, formatSingle handles it.
   
-  // 5 digits (e.g. 38A86279 -> 38A-862.79 or 29LD12345 -> 29LD-123.45)
-  let match = raw.match(/^(\d{2}[A-Z]{1,2})(\d{3})(\d{2})$/);
-  if (match) {
-    return `${match[1]}-${match[2]}.${match[3]}`;
+  // A standard single plate without punctuation is at most 9 chars (e.g. 29LD12345).
+  // If the raw input is much longer, it might be a dual plate.
+  const alphanumericOnly = raw.replace(/[^A-Z0-9]/ig, '');
+  
+  // If the string contains a hyphen, but it's actually just one plate (e.g. "38A-123.45"), formatSingle will handle it 
+  // because formatSingle strips hyphens internally to match the regex.
+  // BUT if we pass "38H06043-38RM00803", formatSingle will strip the hyphen and fail to match, returning the original string.
+  // We want to detect if it's two plates.
+  
+  // Try treating it as a single plate first
+  const singleFormatted = formatSingle(raw);
+  const cleanSingle = singleFormatted.replace(/[^A-Z0-9]/ig, '');
+  
+  // If formatSingle matched a standard regex, it will add a dot (for 5 digits) or a dash.
+  // But if it didn't match, cleanSingle === alphanumericOnly.
+  // If it didn't match and the length is >= 14 (two 7-char plates), let's try splitting it.
+  if (cleanSingle === alphanumericOnly && alphanumericOnly.length >= 13) {
+    // It's likely a dual plate. 
+    // Does the user input have a hyphen or space?
+    let separator = null;
+    if (raw.includes('-')) separator = '-';
+    else if (raw.includes(' ')) separator = ' ';
+
+    if (separator) {
+      const parts = raw.split(separator);
+      // If it's like 38H06043-38RM00803, parts are "38H06043" and "38RM00803"
+      // If it's 38A-12345, parts are "38A" and "12345"
+      // We only want to format each part if BOTH parts look like valid plates (at least 6 chars)
+      if (parts.length === 2 && parts[0].replace(/[^A-Z0-9]/g, '').length >= 6 && parts[1].replace(/[^A-Z0-9]/g, '').length >= 6) {
+        return `${formatSingle(parts[0])} - ${formatSingle(parts[1])}`;
+      }
+    }
   }
-  
-  // 4 digits (e.g. 38A1234 -> 38A-1234)
-  match = raw.match(/^(\d{2}[A-Z]{1,2})(\d{4})$/);
-  if (match) {
-    return `${match[1]}-${match[2]}`;
-  }
-  
-  // Military (e.g. KP1234 -> KP-12-34)
-  match = raw.match(/^([A-Z]{2})(\d{2})(\d{2})$/);
-  if (match) {
-    return `${match[1]}-${match[2]}-${match[3]}`;
-  }
-  
-  return raw;
+
+  return singleFormatted;
 }
 export function groupRecordsByLicensePlate(
   records: ExtractionRecord[],
@@ -74,10 +106,13 @@ export function groupRecordsByLicensePlate(
 
     // Step 4: Create a GroupedVehicle for each trip
     trips.forEach((tripRecords, tripIdx) => {
-      // Sort records within a trip newest-first for display
-      const displaySorted = [...tripRecords].sort(
-        (a, b) => new Date(b.parsedDateISO).getTime() - new Date(a.parsedDateISO).getTime()
-      );
+      // Sort records within a trip (respect customOrder, else chronological oldest-first)
+      const displaySorted = [...tripRecords].sort((a, b) => {
+        if (a.customOrder !== undefined && b.customOrder !== undefined) {
+          return a.customOrder - b.customOrder;
+        }
+        return new Date(a.parsedDateISO).getTime() - new Date(b.parsedDateISO).getTime();
+      });
 
       const photoCount = displaySorted.length;
       const isWarning = photoCount < threshold;
@@ -322,10 +357,13 @@ export async function downloadImagesZip(
     const rawPlate = group.licensePlate.trim().toUpperCase();
     const safePlate = group.licensePlate.replace(/[\[\]*?:\/\\]/g, '').trim() || 'CHUA_RO';
     
-    // Sort records chronological
-    const sorted = [...group.records].sort(
-      (a, b) => new Date(a.parsedDateISO).getTime() - new Date(b.parsedDateISO).getTime()
-    );
+    // Sort records based on customOrder or chronological
+    const sorted = [...group.records].sort((a, b) => {
+      if (a.customOrder !== undefined && b.customOrder !== undefined) {
+        return a.customOrder - b.customOrder;
+      }
+      return new Date(a.parsedDateISO).getTime() - new Date(b.parsedDateISO).getTime();
+    });
 
     let stt = null;
     if (journalMapping && journalMapping[rawPlate]) {
@@ -401,7 +439,9 @@ export async function exportJournalXlsx(entries: any[], records?: ExtractionReco
     let timeStr = entry.timeStr || '';
     
     if (records && !entry.dateStr && !entry.timeStr) {
-      const tripsForPlate = grouped.filter(g => g.licensePlate === entry.licensePlate);
+      const tripsForPlate = grouped
+        .filter(g => g.licensePlate === entry.licensePlate)
+        .sort((a, b) => a.tripIndex - b.tripIndex);
       const allEntriesForPlate = entries.filter(e => e.licensePlate === entry.licensePlate);
       const entryIndex = allEntriesForPlate.findIndex(e => e.id === entry.id);
       

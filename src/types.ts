@@ -8,6 +8,7 @@ export interface ExtractionRecord {
   formattedTime: string; // Time portion e.g. "17:47"
   formattedDate: string; // Date portion e.g. "23/07/2026"
   parsedDateISO: string; // ISO format for sorting e.g. "2026-07-23T17:47:00"
+  customOrder?: number; // Custom drag-and-drop order within a trip
   location?: string; // Optional location/watermark string e.g. "Hà Tĩnh, P. Vũng Áng"
   confidence: number; // e.g. 98 (%)
   notes?: string;

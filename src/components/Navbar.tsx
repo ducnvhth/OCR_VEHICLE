@@ -1,5 +1,5 @@
 import React from 'react';
-import { Truck, UploadCloud, Database, Download, Trash2, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Truck, UploadCloud, Database, Download, Trash2, AlertTriangle, CheckCircle2, ArrowUpCircle } from 'lucide-react';
 
 interface NavbarProps {
   totalRecords: number;
@@ -12,6 +12,10 @@ interface NavbarProps {
   onExportImages: () => void;
   onClearAll: () => void;
   hasApiKey: boolean;
+  isExporting?: boolean;
+  updateInfo?: { available: boolean, url: string, version: string, notes: string } | null;
+  onShowUpdate?: () => void;
+  currentVersion?: string;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -24,6 +28,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   onExportExcel,
   onExportImages,
   onClearAll,
+  isExporting = false,
+  updateInfo = null,
+  onShowUpdate,
+  currentVersion,
 }) => {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -41,21 +49,27 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Brand & Logo */}
           <div className="flex items-center space-x-3 w-full md:w-auto justify-between md:justify-start">
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white font-black shadow-md shadow-blue-500/20">
-                <Truck className="w-6 h-6" />
-              </div>
               <div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-2 relative">
                   <h1 className="text-base sm:text-lg font-black text-white tracking-tight uppercase">
-                    THỐNG KÊ ẢNH THEO BIỂN SỐ XE
+                    THỐNG KÊ SỐ LƯỢNG ẢNH THEO BIỂN SỐ XE
                   </h1>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                    Gemini AI
-                  </span>
+                  {currentVersion && (
+                    <span className="hidden sm:inline-block px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[10px] font-mono font-bold rounded">
+                      v{currentVersion}
+                    </span>
+                  )}
+                  {updateInfo?.available && (
+                    <button
+                      onClick={onShowUpdate}
+                      className="absolute -right-32 sm:-right-36 inline-flex items-center space-x-1 px-2 py-0.5 bg-rose-500/20 text-rose-400 hover:bg-rose-500 hover:text-white border border-rose-500/50 rounded-full text-[10px] font-bold transition animate-pulse cursor-pointer"
+                      title="Có phiên bản mới"
+                    >
+                      <ArrowUpCircle className="w-3 h-3" />
+                      <span>Cập nhật (v{updateInfo.version})</span>
+                    </button>
+                  )}
                 </div>
-                <p className="text-xs text-slate-400">
-                  Trích xuất Biển kiểm soát & Mốc thời gian • Cảnh báo số lượng ảnh theo chỉ tiêu ({threshold} ảnh)
-                </p>
               </div>
             </div>
 
@@ -63,11 +77,11 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div className="hidden lg:flex items-center space-x-5 pl-6 border-l border-slate-800">
               <div className="text-center">
                 <div className="text-[11px] font-medium text-slate-400">Tổng số ảnh</div>
-                <div className="text-sm font-bold text-blue-400 font-mono">{totalRecords} ảnh</div>
+                <div className="text-sm font-bold text-blue-400 font-mono">{totalRecords}</div>
               </div>
               <div className="text-center">
                 <div className="text-[11px] font-medium text-slate-400">Số biển kiểm soát</div>
-                <div className="text-sm font-bold text-emerald-400 font-mono">{totalVehicles} biển</div>
+                <div className="text-sm font-bold text-emerald-400 font-mono">{totalVehicles}</div>
               </div>
               <div className="text-center">
                 <div className="text-[11px] font-medium text-slate-400">Trạng thái cảnh báo</div>
@@ -127,11 +141,21 @@ export const Navbar: React.FC<NavbarProps> = ({
 
                 <button
                   onClick={onExportImages}
-                  className="inline-flex items-center px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700 transition cursor-pointer shrink-0"
+                  disabled={isExporting}
+                  className="inline-flex items-center px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700 transition cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
                   id="btn-export-images"
                 >
-                  <Download className="w-4 h-4 mr-1.5" />
-                  Xuất Folder Ảnh
+                  {isExporting ? (
+                    <>
+                      <Download className="w-4 h-4 mr-1.5 animate-spin" />
+                      Đang nén file...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4 mr-1.5" />
+                      Xuất Folder Ảnh
+                    </>
+                  )}
                 </button>
 
                 <button

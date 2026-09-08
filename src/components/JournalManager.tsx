@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { JournalEntry } from '../types';
-import { Plus, Trash2, Edit2, Save, X, Database, Download, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Database, Download, ChevronUp, ChevronDown, RefreshCw, Search } from 'lucide-react';
 import { formatLicensePlate } from '../utils/dataHelpers';
 
 interface JournalManagerProps {
@@ -26,6 +26,7 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
 }) => {
   type SortKey = 'stt' | 'licensePlate' | 'date' | 'time' | 'photoCount';
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<{ stt: string; licensePlate: string }>({ stt: '', licensePlate: '' });
@@ -45,7 +46,9 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
 
   const enrichedEntries = useMemo(() => {
     return journalEntries.map((entry) => {
-      const tripsForPlate = groupedVehicles.filter(g => g.licensePlate === entry.licensePlate);
+      const tripsForPlate = groupedVehicles
+        .filter(g => g.licensePlate === entry.licensePlate)
+        .sort((a, b) => a.tripIndex - b.tripIndex);
       const allEntriesForPlate = journalEntries.filter(e => e.licensePlate === entry.licensePlate);
       const entryIndex = allEntriesForPlate.findIndex(e => e.id === entry.id);
 
@@ -111,6 +114,12 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
     return sortableItems;
   }, [enrichedEntries, sortConfig]);
 
+  const filteredEntries = useMemo(() => {
+    if (!searchQuery.trim()) return sortedEntries;
+    const lowerQuery = searchQuery.toLowerCase();
+    return sortedEntries.filter(e => e.licensePlate.toLowerCase().includes(lowerQuery));
+  }, [sortedEntries, searchQuery]);
+
   const requestSort = (key: SortKey) => {
     let direction: 'asc' | 'desc' = 'asc';
     if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
@@ -158,9 +167,19 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
           <h2 className="text-lg font-bold text-slate-800">Quản lý Nhật trình ({journalEntries.length} dòng)</h2>
         </div>
         <div className="flex items-center space-x-3">
+          <div className="relative">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Tìm biển số xe..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 pr-3 py-1.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 w-48 shadow-sm transition"
+            />
+          </div>
           {journalEntries.length > 0 && (
             <>
-              {sortConfig && (
+              {sortConfig && !searchQuery.trim() && (
                 <button
                   onClick={() => {
                     if (window.confirm('Cập nhật lại STT theo thứ tự đang hiển thị? Thao tác này sẽ đánh số lại toàn bộ STT từ 1.')) {
@@ -276,7 +295,7 @@ export const JournalManager: React.FC<JournalManagerProps> = ({
               </tr>
             )}
 
-            {sortedEntries.map((entry) => {
+            {filteredEntries.map((entry) => {
               return (
               <tr key={entry.id} className="hover:bg-slate-50/80 transition group">
                 {editingId === entry.id ? (

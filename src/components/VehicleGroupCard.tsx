@@ -1,27 +1,81 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { GroupedVehicle, ExtractionRecord } from '../types';
-import { AlertTriangle, CheckCircle2, Clock, Maximize2, Trash2, Calendar, FileText, Edit3, Copy, Plus } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, Maximize2, Trash2, FileText, Edit3, Copy, Plus, Edit2, Save, X } from 'lucide-react';
 
 interface VehicleGroupCardProps {
   group: GroupedVehicle;
+  journalStt?: string | null;
   onSelectRecord: (record: ExtractionRecord, groupTotal: number, contextList?: ExtractionRecord[]) => void;
   onDeleteRecord?: (id: string) => void;
   onDeleteGroup?: (recordIds: string[], plate: string, tripIdx: number) => void;
   onAddImages?: (files: File[], plate: string, tripRecords: ExtractionRecord[]) => void;
+  onReorderRecords?: (reorderedRecords: ExtractionRecord[]) => void;
+  onEditGroup?: (recordIds: string[], updates: { licensePlate: string, formattedTime: string, formattedDate: string }) => void;
 }
 
 export const VehicleGroupCard: React.FC<VehicleGroupCardProps> = ({
   group,
+  journalStt,
   onSelectRecord,
   onDeleteRecord,
   onDeleteGroup,
   onAddImages,
+  onReorderRecords,
+  onEditGroup,
 }) => {
   const { licensePlate, records, photoCount, isWarning, requiredCount, missingCount, latestTimestamp, earliestTimestamp, tripIndex, totalTrips } = group;
 
   const [isCopying, setIsCopying] = React.useState(false);
   const [toastMsg, setToastMsg] = React.useState<string | null>(null);
   const addImageInputRef = React.useRef<HTMLInputElement>(null);
+
+  const [draggedIdx, setDraggedIdx] = React.useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = React.useState<number | null>(null);
+
+  const [isEditingGroup, setIsEditingGroup] = useState(false);
+  const [editPlate, setEditPlate] = useState(licensePlate);
+  const [editTime, setEditTime] = useState(earliestTimestamp.split(' ')[0] || '');
+  const [editDate, setEditDate] = useState(earliestTimestamp.split(' ')[1] || '');
+
+  const handleDragStart = (e: React.DragEvent, idx: number) => {
+    setDraggedIdx(idx);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragEnter = (e: React.DragEvent, idx: number) => {
+    e.preventDefault();
+    setDragOverIdx(idx);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e: React.DragEvent, dropIdx: number) => {
+    e.preventDefault();
+    if (draggedIdx === null || draggedIdx === dropIdx) {
+      setDraggedIdx(null);
+      setDragOverIdx(null);
+      return;
+    }
+    
+    const newRecords = [...records];
+    const [draggedItem] = newRecords.splice(draggedIdx, 1);
+    newRecords.splice(dropIdx, 0, draggedItem);
+    
+    const updatedRecords = newRecords.map((rec, index) => ({
+      ...rec,
+      customOrder: index
+    }));
+    
+    if (onReorderRecords) {
+      onReorderRecords(updatedRecords);
+    }
+    
+    setDraggedIdx(null);
+    setDragOverIdx(null);
+  };
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -97,51 +151,113 @@ export const VehicleGroupCard: React.FC<VehicleGroupCardProps> = ({
     <div className={`bg-white border rounded-2xl overflow-hidden shadow-sm transition hover:shadow-md ${
       isWarning ? 'border-rose-300 ring-1 ring-rose-200' : 'border-slate-200'
     }`}>
-      {/* Group Header */}
       <div className={`p-4 sm:p-5 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
         isWarning ? 'bg-rose-50/70 border-rose-200' : 'bg-slate-50 border-slate-200'
       }`}>
-        <div className="flex items-center space-x-3">
-          <div 
-            className="bg-amber-400 text-slate-950 font-black font-mono text-xl sm:text-2xl px-3.5 py-1 rounded-xl border border-slate-900 shadow-sm shrink-0 cursor-pointer hover:bg-amber-300 transition"
-            onClick={handleCopyPlate}
-            title="Click để copy biển số"
-          >
-            {licensePlate}
-          </div>
-          <button 
-            onClick={handleCopyImages} 
-            disabled={isCopying}
-            className="p-2 bg-white hover:bg-blue-50 text-blue-600 rounded-lg border border-slate-200 hover:border-blue-300 transition disabled:opacity-50 flex items-center justify-center shadow-sm shrink-0" 
-            title="Gộp và copy tất cả ảnh vào Clipboard"
-          >
-            {isCopying ? <Clock className="w-5 h-5 animate-spin" /> : <Copy className="w-5 h-5" />}
-          </button>
-          {onAddImages && (
-            <>
+        <div className="flex items-center space-x-3 w-full">
+          {isEditingGroup ? (
+            <div className="flex items-center gap-2 w-full">
               <input
-                ref={addImageInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files.length > 0) {
-                    onAddImages(Array.from(e.target.files), licensePlate, records);
-                    e.target.value = ''; // Reset to allow re-selecting same files
-                  }
-                }}
+                type="text"
+                value={editPlate}
+                onChange={e => setEditPlate(e.target.value)}
+                className="px-2 py-1.5 text-sm font-bold border border-blue-400 rounded-lg focus:outline-none uppercase w-32 shadow-sm"
               />
-              <button
-                onClick={() => addImageInputRef.current?.click()}
-                className="p-2 bg-white hover:bg-emerald-50 text-emerald-600 rounded-lg border border-slate-200 hover:border-emerald-300 transition flex items-center justify-center shadow-sm shrink-0"
-                title="Thêm ảnh vào lượt này"
+              <input
+                type="text"
+                value={editTime}
+                onChange={e => setEditTime(e.target.value)}
+                placeholder="HH:mm"
+                className="px-2 py-1.5 text-sm font-medium border border-slate-300 rounded-lg focus:outline-none w-20 shadow-sm text-center"
+              />
+              <input
+                type="text"
+                value={editDate}
+                onChange={e => setEditDate(e.target.value)}
+                placeholder="DD/MM/YYYY"
+                className="px-2 py-1.5 text-sm font-medium border border-slate-300 rounded-lg focus:outline-none w-28 shadow-sm text-center"
+              />
+              <button 
+                onClick={() => {
+                  if (onEditGroup) {
+                    onEditGroup(records.map(r => r.id), { licensePlate: editPlate, formattedTime: editTime, formattedDate: editDate });
+                  }
+                  setIsEditingGroup(false);
+                }}
+                className="p-1.5 text-white bg-emerald-500 hover:bg-emerald-600 rounded-lg transition shadow-sm ml-1"
+                title="Lưu thay đổi"
               >
-                <Plus className="w-5 h-5" />
+                <Save className="w-4 h-4" />
               </button>
-            </>
+              <button 
+                onClick={() => {
+                  setIsEditingGroup(false);
+                  setEditPlate(licensePlate);
+                  const timeParts = earliestTimestamp.split(' ');
+                  setEditTime(timeParts[0] || '');
+                  setEditDate(timeParts[1] || '');
+                }}
+                className="p-1.5 text-slate-500 hover:bg-slate-200 rounded-lg transition"
+                title="Hủy"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center space-x-3">
+              <div 
+                className="bg-amber-400 text-slate-950 font-black font-mono text-xl sm:text-2xl px-3.5 py-1 rounded-xl border border-slate-900 shadow-sm shrink-0 cursor-pointer hover:bg-amber-300 transition flex items-center justify-center gap-2"
+                onClick={handleCopyPlate}
+                title="Click để copy biển số"
+              >
+                {licensePlate}
+              </div>
+              <button 
+                onClick={handleCopyImages} 
+                disabled={isCopying}
+                className="p-2 bg-white hover:bg-blue-50 text-blue-600 rounded-lg border border-slate-200 hover:border-blue-300 transition disabled:opacity-50 flex items-center justify-center shadow-sm shrink-0" 
+                title="Gộp và copy tất cả ảnh vào Clipboard"
+              >
+                {isCopying ? <Clock className="w-5 h-5 animate-spin" /> : <Copy className="w-5 h-5" />}
+              </button>
+              {onAddImages && (
+                <>
+                  <input
+                    ref={addImageInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        onAddImages(Array.from(e.target.files), licensePlate, records);
+                        e.target.value = ''; // Reset to allow re-selecting same files
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={() => addImageInputRef.current?.click()}
+                    className="p-2 bg-white hover:bg-emerald-50 text-emerald-600 rounded-lg border border-slate-200 hover:border-emerald-300 transition flex items-center justify-center shadow-sm shrink-0"
+                    title="Thêm ảnh vào lượt này"
+                  >
+                    <Plus className="w-5 h-5" />
+                  </button>
+                </>
+              )}
+              {/* Edit Group Button */}
+              {onEditGroup && (
+                <button
+                  onClick={() => setIsEditingGroup(true)}
+                  className="p-2 bg-white hover:bg-amber-50 text-amber-600 rounded-lg border border-slate-200 hover:border-amber-300 transition flex items-center justify-center shadow-sm shrink-0"
+                  title="Sửa thông tin lượt (BKS, Giờ, Ngày)"
+                >
+                  <Edit2 className="w-5 h-5" />
+                </button>
+              )}
+            </div>
           )}
-          <div>
+          
+          <div className="flex flex-col mt-2 sm:mt-0 ml-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-bold text-slate-900 text-sm sm:text-base">Biển kiểm soát</span>
 
@@ -220,11 +336,21 @@ export const VehicleGroupCard: React.FC<VehicleGroupCardProps> = ({
         </h4>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5">
-          {records.map((rec, idx) => (
+          {records.map((rec, idx) => {
+            const safePlate = licensePlate.replace(/[\[\]*?:\/\\]/g, '').trim() || 'CHUA_RO';
+            const displayFileName = journalStt ? `${journalStt}.${idx + 1}` : `${safePlate}_${idx + 1}`;
+            
+            return (
             <div
               key={rec.id}
+              draggable
+              onDragStart={(e) => handleDragStart(e, idx)}
+              onDragEnter={(e) => handleDragEnter(e, idx)}
+              onDragOver={handleDragOver}
+              onDragEnd={() => { setDraggedIdx(null); setDragOverIdx(null); }}
+              onDrop={(e) => handleDrop(e, idx)}
               onClick={() => onSelectRecord(rec, photoCount, records)}
-              className="group relative bg-slate-50 border border-slate-200 hover:border-blue-400 rounded-xl p-2.5 transition duration-200 cursor-pointer hover:shadow-md flex flex-col justify-between"
+              className={`group relative bg-slate-50 border border-slate-200 hover:border-blue-400 rounded-xl p-2.5 transition duration-200 cursor-pointer hover:shadow-md flex flex-col justify-between ${dragOverIdx === idx ? 'border-blue-500 scale-105 shadow-lg z-10' : ''} ${draggedIdx === idx ? 'opacity-50' : ''}`}
             >
               {/* Photo Thumbnail */}
               <div className="relative aspect-[4/3] rounded-lg overflow-hidden bg-slate-900 border border-slate-200 mb-2">
@@ -235,8 +361,8 @@ export const VehicleGroupCard: React.FC<VehicleGroupCardProps> = ({
                 />
                 
                 {/* Index badge */}
-                <span className="absolute top-1.5 left-1.5 bg-slate-900/80 text-white font-mono text-[10px] font-bold px-1.5 py-0.5 rounded backdrop-blur">
-                  #{idx + 1}
+                <span className="absolute top-1.5 left-1.5 bg-slate-900/80 text-white font-mono text-[10px] font-bold px-1.5 py-0.5 rounded backdrop-blur" title={`Tên ảnh khi xuất file: ${displayFileName}.jpg/png`}>
+                  {displayFileName}
                 </span>
 
                 {/* Hover zoom icon */}
@@ -284,7 +410,7 @@ export const VehicleGroupCard: React.FC<VehicleGroupCardProps> = ({
                 </button>
               )}
             </div>
-          ))}
+          )})}
         </div>
       </div>
 

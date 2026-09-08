@@ -1,6 +1,8 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import https from "https";
+import { spawn } from "child_process";
 import { GoogleGenAI, Type } from "@google/genai";
 import * as dotenv from "dotenv";
 
@@ -98,6 +100,65 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Auto Updater API
+app.post("/api/do-update", (req, res) => {
+  const downloadUrl = req.body.downloadUrl;
+  if (!downloadUrl) return res.status(400).json({ success: false, error: "Missing downloadUrl" });
+
+  const tempExePath = path.join(process.cwd(), "update_temp.exe");
+  const batPath = path.join(process.cwd(), "apply_update.bat");
+
+  const downloadFile = (url: string, dest: string, cb: (err?: Error) => void) => {
+    https.get(url, (response) => {
+      if (response.statusCode === 301 || response.statusCode === 302) {
+        return downloadFile(response.headers.location!, dest, cb);
+      }
+      if (response.statusCode !== 200) {
+        return cb(new Error(`Failed to get '${url}' (${response.statusCode})`));
+      }
+      const file = fs.createWriteStream(dest);
+      response.pipe(file);
+      file.on('finish', () => {
+        file.close();
+        cb();
+      });
+    }).on('error', (err) => {
+      fs.unlink(dest, () => {});
+      cb(err);
+    });
+  };
+
+  downloadFile(downloadUrl, tempExePath, (err) => {
+    if (err) return res.status(500).json({ success: false, error: err.message });
+
+    const batContent = `
+@echo off
+echo Dang cap nhat phan mem... Vui long doi trong giay lat...
+timeout /t 3 /nobreak > NUL
+taskkill /F /IM OCR_Vehicle.exe > NUL
+del OCR_Vehicle.exe
+rename update_temp.exe OCR_Vehicle.exe
+start "" "OCR_Vehicle.exe"
+del "%~f0"
+    `.trim();
+
+    fs.writeFileSync(batPath, batContent, "utf-8");
+
+    const child = spawn("cmd.exe", ["/c", batPath], {
+      detached: true,
+      stdio: "ignore",
+      cwd: process.cwd()
+    });
+    child.unref();
+
+    res.json({ success: true });
+
+    setTimeout(() => {
+      process.exit(0);
+    }, 1000);
+  });
+});
+
 // Fetch all saved records from DB
 app.get("/api/records", (req, res) => {
   const records = readDb();
@@ -188,17 +249,21 @@ app.post("/api/journal/batch", express.json(), (req, res) => {
   const { mapping } = req.body;
   let records = readJournalDb();
   
-  // Convert mapping (plate -> stt) to array of entries and merge
+  // Convert mapping (plate -> stt array) to array of entries and merge
   Object.keys(mapping).forEach(plate => {
-    const stt = mapping[plate];
-    const existingIndex = records.findIndex((r: any) => r.licensePlate === plate);
-    if (existingIndex !== -1) {
-      records[existingIndex].stt = stt;
-    } else {
-      records.push({
-        id: "jrn_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
-        licensePlate: plate,
-        stt: stt
+    const sttArray = mapping[plate];
+    
+    if (Array.isArray(sttArray)) {
+      // Xóa tất cả các bản ghi nhật trình cũ của biển số này
+      records = records.filter(r => r.licensePlate !== plate);
+      
+      // Thêm lại các bản ghi mới theo đúng thứ tự mảng STT (thứ tự thời gian)
+      sttArray.forEach((stt, index) => {
+        records.push({
+          id: "jrn_" + Date.now() + "_" + index + "_" + Math.random().toString(36).substring(2, 7),
+          licensePlate: plate,
+          stt: stt
+        });
       });
     }
   });

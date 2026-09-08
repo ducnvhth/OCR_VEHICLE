@@ -10,7 +10,10 @@ import { DataTable } from './components/DataTable';
 import { VehicleDetailModal } from './components/VehicleDetailModal';
 import { JournalManager } from './components/JournalManager';
 import { ManualEntryModal } from './components/ManualEntryModal';
-import { Layers, BarChart3, Table as TableIcon, Search, RefreshCw, Filter, AlertTriangle, CheckCircle2, X, Database, ChevronDown } from 'lucide-react';
+import { Layers, BarChart3, Table as TableIcon, Search, RefreshCw, Filter, AlertTriangle, CheckCircle2, X, Database, ChevronDown, Download, ArrowUpCircle } from 'lucide-react';
+import packageJson from '../package.json';
+
+const CURRENT_VERSION = packageJson.version || '1.0.0';
 
 export function App() {
   const [records, setRecords] = useState<ExtractionRecord[]>([]);
@@ -57,11 +60,63 @@ export function App() {
   const [activeTab, setActiveTab] = useState<'grouped' | 'analytics' | 'table' | 'journal'>('grouped');
   const [showManualEntry, setShowManualEntry] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [sttSearchTerm, setSttSearchTerm] = useState('');
   const [selectedRecord, setSelectedRecord] = useState<ExtractionRecord | null>(null);
   const [selectedRecordGroupTotal, setSelectedRecordGroupTotal] = useState<number>(1);
   const [modalContextRecords, setModalContextRecords] = useState<ExtractionRecord[]>([]);
   const [hasApiKey, setHasApiKey] = useState(true);
   const [apiKeysCount, setApiKeysCount] = useState(1);
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Auto Update State
+  const [updateInfo, setUpdateInfo] = useState<{ available: boolean, url: string, version: string, notes: string } | null>(null);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  // Fetch GitHub Releases for updates
+  useEffect(() => {
+    fetch('https://api.github.com/repos/ducnvhth/OCR_VEHICLE/releases/latest')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.tag_name) {
+          const latestVersion = data.tag_name.replace('v', '');
+          const isNewer = latestVersion.localeCompare(CURRENT_VERSION, undefined, { numeric: true, sensitivity: 'base' }) > 0;
+          if (isNewer && data.assets && data.assets.length > 0) {
+            const exeAsset = data.assets.find((a: any) => a.name.endsWith('.exe'));
+            if (exeAsset) {
+              setUpdateInfo({
+                available: true,
+                url: exeAsset.browser_download_url,
+                version: latestVersion,
+                notes: data.body || 'Cập nhật phiên bản mới giúp cải thiện hiệu năng và vá lỗi.'
+              });
+            }
+          }
+        }
+      })
+      .catch(console.error);
+  }, []);
+
+  const handleDoUpdate = async () => {
+    if (!updateInfo) return;
+    setIsUpdating(true);
+    try {
+      const res = await fetch('/api/do-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ downloadUrl: updateInfo.url })
+      });
+      const data = await res.json();
+      if (!data.success) {
+        alert('Lỗi cập nhật: ' + data.error);
+        setIsUpdating(false);
+      }
+      // If success, backend will restart the exe. Just keep loading.
+    } catch(e) {
+      console.error(e);
+      // Connection will drop when backend restarts
+    }
+  };
 
   // Batch upload state
   const [progress, setProgress] = useState<BatchProcessingProgress>({
@@ -75,7 +130,14 @@ export function App() {
   // Compute mapping from journalEntries
   const journalMapping = useMemo(() => {
     const mapping: Record<string, string[]> = {};
-    journalEntries.forEach(entry => {
+    
+    const sortedEntries = [...journalEntries].sort((a, b) => {
+      const aStt = parseInt(a.stt, 10) || 0;
+      const bStt = parseInt(b.stt, 10) || 0;
+      return aStt - bStt;
+    });
+
+    sortedEntries.forEach(entry => {
       if (!mapping[entry.licensePlate]) {
         mapping[entry.licensePlate] = [];
       }
@@ -124,12 +186,26 @@ export function App() {
 
   // Filtered grouped vehicles
   const filteredGroups = useMemo(() => {
-    if (!searchTerm.trim()) return groupedVehicles;
+    let result = groupedVehicles;
+    
+    // Filter by STT
+    if (sttSearchTerm.trim()) {
+      const term = sttSearchTerm.trim().toLowerCase();
+      result = result.filter(group => {
+        const sttsForPlate = journalMapping[group.licensePlate];
+        const stt = sttsForPlate ? sttsForPlate[group.tripIndex - 1] : null;
+        if (!stt) return false;
+        // Exact match or prefix match (e.g. 106 matches 106.1)
+        return stt.toLowerCase() === term || stt.toLowerCase().startsWith(term + '.');
+      });
+    }
+
+    if (!searchTerm.trim()) return result;
 
     const term = searchTerm.toLowerCase();
     const cleanTerm = term.replace(/[^a-z0-9]/g, ''); // Remove non-alphanumeric for flexible matching
 
-    return groupedVehicles.filter((group) => {
+    return result.filter((group) => {
       const cleanPlate = group.licensePlate.toLowerCase().replace(/[^a-z0-9]/g, '');
       const matchPlate = cleanPlate.includes(cleanTerm) || group.licensePlate.toLowerCase().includes(term);
       
@@ -141,7 +217,7 @@ export function App() {
       );
       return matchPlate || matchRecords;
     });
-  }, [groupedVehicles, searchTerm]);
+  }, [groupedVehicles, searchTerm, sttSearchTerm, journalMapping]);
 
   // Stats calculation
   const stats = useMemo(() => calculateSystemStats(records, minPhotoThreshold), [records, minPhotoThreshold]);
@@ -386,8 +462,16 @@ export function App() {
     downloadXlsx(records, minPhotoThreshold, tripGapMinutes);
   };
 
-  const handleExportImages = () => {
-    downloadImagesZip(records, journalMapping, tripGapMinutes);
+  const handleExportImages = async () => {
+    setIsExporting(true);
+    try {
+      await downloadImagesZip(records, journalMapping, tripGapMinutes);
+    } catch (err) {
+      console.error(err);
+      alert('Có lỗi xảy ra khi xuất folder ảnh.');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const handleExportJournal = (sortedEntries?: any[]) => {
@@ -407,7 +491,7 @@ export function App() {
         return;
       }
 
-      const newMapping: Record<string, string> = {};
+      const newMapping: Record<string, string[]> = {};
       let count = 0;
       let sttCol = -1;
       let plateCol = -1;
@@ -437,7 +521,8 @@ export function App() {
         if (stt && plate) {
           // Normalize plate string slightly (remove dashes if any, but keep alphanumeric)
           const normalizedPlate = plate.replace(/[\[\]*?:\/\\]/g, '').trim();
-          newMapping[normalizedPlate] = stt;
+          if (!newMapping[normalizedPlate]) newMapping[normalizedPlate] = [];
+          newMapping[normalizedPlate].push(stt);
           count++;
         }
       });
@@ -530,10 +615,15 @@ export function App() {
         }
       });
 
-      // Update local state
-      setJournalEntries(prev =>
-        prev.map(entry => updatedMap.has(entry.id) ? updatedMap.get(entry.id) : entry)
-      );
+      // Update local state and sort by STT
+      setJournalEntries(prev => {
+        const updated = prev.map(entry => updatedMap.has(entry.id) ? updatedMap.get(entry.id) : entry);
+        return updated.sort((a, b) => {
+          const aStt = parseInt(a.stt, 10) || 0;
+          const bStt = parseInt(b.stt, 10) || 0;
+          return aStt - bStt;
+        });
+      });
     } catch (err) {
       console.error('L\u1ed7i khi c\u1eadp nh\u1eadt STT h\u00e0ng lo\u1ea1t:', err);
       alert('C\u00f3 l\u1ed7i x\u1ea3y ra khi c\u1eadp nh\u1eadt STT. Vui l\u00f2ng th\u1eed l\u1ea1i.');
@@ -585,8 +675,44 @@ export function App() {
       const newRecords = records.filter((r) => !recordIds.includes(r.id));
       setRecords(newRecords);
       // Đồng bộ journal: xóa entry thừa cho biển số này
-      removeExcessJournalEntries(plate, newRecords);
+      removeExcessJournalEntries(plate.trim().toUpperCase(), newRecords);
     }
+  };
+
+  const handleEditGroup = (recordIds: string[], updates: { licensePlate: string, formattedTime: string, formattedDate: string }) => {
+    // build iso date
+    let isoDate = new Date().toISOString();
+    try {
+      const [day, month, year] = updates.formattedDate.split('/');
+      const [hour, minute] = updates.formattedTime.split(':');
+      const dateObj = new Date(parseInt(year, 10), parseInt(month, 10) - 1, parseInt(day, 10), parseInt(hour, 10), parseInt(minute, 10));
+      if (!isNaN(dateObj.getTime())) {
+        isoDate = dateObj.toISOString();
+      }
+    } catch (e) {}
+
+    const fullUpdates = {
+      ...updates,
+      licensePlate: updates.licensePlate.trim().toUpperCase(),
+      rawLicensePlate: updates.licensePlate.trim().toUpperCase(),
+      timestamp: `${updates.formattedTime} ${updates.formattedDate}`,
+      parsedDateISO: isoDate,
+    };
+
+    recordIds.forEach(id => {
+      fetch(`/api/records/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fullUpdates),
+      }).catch(console.error);
+    });
+
+    setRecords(prev => prev.map(r => {
+      if (recordIds.includes(r.id)) {
+        return { ...r, ...fullUpdates, isEdited: true };
+      }
+      return r;
+    }));
   };
 
   const handleBatchDelete = (ids: string[]) => {
@@ -671,6 +797,29 @@ export function App() {
     }
   };
 
+  const handleReorderRecords = (reorderedList: ExtractionRecord[]) => {
+    // Cập nhật lên server
+    reorderedList.forEach((r) => {
+      fetch(`/api/records/${r.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customOrder: r.customOrder }),
+      }).catch(console.error);
+    });
+
+    // Cập nhật UI
+    setRecords((prev) => {
+      const updated = [...prev];
+      reorderedList.forEach((r) => {
+        const idx = updated.findIndex((u) => u.id === r.id);
+        if (idx !== -1) {
+          updated[idx] = r;
+        }
+      });
+      return updated;
+    });
+  };
+
   const warningPlatesList = useMemo(() => {
     return Array.from(new Set(groupedVehicles.filter(g => g.isWarning).map(g => g.licensePlate)));
   }, [groupedVehicles]);
@@ -719,6 +868,10 @@ export function App() {
         onExportImages={handleExportImages}
         onClearAll={handleClearAll}
         hasApiKey={hasApiKey}
+        isExporting={isExporting}
+        updateInfo={updateInfo}
+        onShowUpdate={() => setShowUpdateModal(true)}
+        currentVersion={CURRENT_VERSION}
       />
 
       {/* Main Content Area */}
@@ -850,45 +1003,75 @@ export function App() {
             </div>
           </div>
 
-          {/* Row 2: Search Dropdown */}
+          {/* Row 2: Search Filters */}
           {activeTab === 'grouped' && (
-            <div className="flex justify-between items-center bg-slate-50 p-2 rounded-xl border border-slate-200 w-full sm:w-80 ml-auto shadow-sm">
-              <span className="text-sm font-semibold text-slate-700 px-2 shrink-0">Lọc biển số:</span>
-              <div className="relative flex-1 group">
-                {(() => {
-                  const uniquePlates = Array.from(new Set(groupedVehicles.map(g => g.licensePlate))).sort();
-                  return (
-                    <>
-                      <input
-                        type="text"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        placeholder={`Tìm biển số... (${uniquePlates.length})`}
-                        list="search-plate-list"
-                        className="w-full bg-white border border-slate-200 rounded-lg pl-3 pr-8 py-1.5 text-sm font-mono text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-xs transition"
-                      />
-                      <datalist id="search-plate-list">
-                        {uniquePlates.map(plate => (
-                          <option key={plate} value={plate} />
-                        ))}
-                      </datalist>
-                    </>
-                  );
-                })()}
-                <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
-                  <Search className="w-4 h-4 text-slate-400" />
+            <div className="flex flex-wrap items-center gap-4 bg-slate-50 p-2 rounded-xl border border-slate-200 ml-auto shadow-sm w-full sm:w-auto">
+              
+              {/* Filter by STT */}
+              <div className="flex items-center flex-1 min-w-[120px]">
+                <span className="text-sm font-semibold text-slate-700 px-2 shrink-0">STT:</span>
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={sttSearchTerm}
+                    onChange={(e) => setSttSearchTerm(e.target.value)}
+                    placeholder="VD: 106"
+                    className="w-full bg-white border border-slate-200 rounded-lg pl-3 pr-8 py-1.5 text-sm font-mono text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-xs transition"
+                  />
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
+                    <Search className="w-4 h-4 text-slate-400" />
+                  </div>
+                  {sttSearchTerm && (
+                    <button
+                      onClick={() => setSttSearchTerm('')}
+                      className="absolute right-8 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center text-rose-500 hover:text-white bg-white hover:bg-rose-500 border border-slate-200 hover:border-rose-500 rounded-lg transition shadow-sm"
+                      title="Xóa bộ lọc"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
               </div>
-              
-              {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm('')}
-                  className="ml-2 w-7 h-7 flex items-center justify-center text-rose-500 hover:text-white bg-white hover:bg-rose-500 border border-slate-200 hover:border-rose-500 rounded-lg transition shadow-sm shrink-0"
-                  title="Xóa bộ lọc"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
+
+              {/* Filter by Plate */}
+              <div className="flex items-center flex-1 min-w-[200px]">
+                <span className="text-sm font-semibold text-slate-700 px-2 shrink-0">Biển số:</span>
+                <div className="relative flex-1 group">
+                  {(() => {
+                    const uniquePlates = Array.from(new Set(groupedVehicles.map(g => g.licensePlate))).sort();
+                    return (
+                      <>
+                        <input
+                          type="text"
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          placeholder={`Tìm biển số... (${uniquePlates.length})`}
+                          list="search-plate-list"
+                          className="w-full bg-white border border-slate-200 rounded-lg pl-3 pr-8 py-1.5 text-sm font-mono text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-xs transition"
+                        />
+                        <datalist id="search-plate-list">
+                          {uniquePlates.map(plate => (
+                            <option key={plate} value={plate} />
+                          ))}
+                        </datalist>
+                      </>
+                    );
+                  })()}
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
+                    <Search className="w-4 h-4 text-slate-400" />
+                  </div>
+                  {searchTerm && (
+                    <button
+                      onClick={() => setSearchTerm('')}
+                      className="absolute right-8 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center text-rose-500 hover:text-white bg-white hover:bg-rose-500 border border-slate-200 hover:border-rose-500 rounded-lg transition shadow-sm"
+                      title="Xóa bộ lọc"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
             </div>
           )}
         </div>
@@ -935,20 +1118,29 @@ export function App() {
               </div>
             ) : (
               <div className="space-y-5">
-                {filteredGroups.map((group) => (
-                  <VehicleGroupCard
-                    key={`${group.licensePlate}_trip${group.tripIndex}`}
-                    group={group}
-                    onSelectRecord={(rec, total, contextList) => {
-                      setSelectedRecord(rec);
-                      setSelectedRecordGroupTotal(total);
-                      setModalContextRecords(contextList || records);
-                    }}
-                    onDeleteRecord={handleDeleteRecord}
-                    onDeleteGroup={(ids, plate, tripIdx) => handleDeleteGroup(ids, plate, tripIdx)}
-                    onAddImages={handleAddImagesToGroup}
-                  />
-                ))}
+                {filteredGroups.map((group) => {
+                  const plate = group.licensePlate.trim().toUpperCase();
+                  const sttArray = journalMapping[plate];
+                  const stt = sttArray ? (sttArray[group.tripIndex - 1] || sttArray[sttArray.length - 1]) : null;
+
+                  return (
+                    <VehicleGroupCard
+                      key={`${group.licensePlate}_trip${group.tripIndex}`}
+                      group={group}
+                      journalStt={stt}
+                      onSelectRecord={(rec, total, contextList) => {
+                        setSelectedRecord(rec);
+                        setSelectedRecordGroupTotal(total);
+                        setModalContextRecords(contextList || records);
+                      }}
+                      onDeleteRecord={handleDeleteRecord}
+                      onDeleteGroup={(ids, plate, tripIdx) => handleDeleteGroup(ids, plate, tripIdx)}
+                      onAddImages={handleAddImagesToGroup}
+                      onReorderRecords={handleReorderRecords}
+                      onEditGroup={handleEditGroup}
+                    />
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1037,6 +1229,94 @@ export function App() {
           uniquePlates={Array.from(new Set(records.map(r => r.licensePlate).filter(Boolean)))}
           smartSuggestions={smartSuggestions}
         />
+      )}
+
+      {/* Auto-Update Modal */}
+      {showUpdateModal && updateInfo && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden flex flex-col">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-blue-50/50">
+              <div className="flex items-center space-x-2 text-blue-700">
+                <ArrowUpCircle className="w-6 h-6" />
+                <h3 className="text-lg font-bold">Cập nhật phần mềm</h3>
+              </div>
+              {!isUpdating && (
+                <button onClick={() => setShowUpdateModal(false)} className="text-slate-400 hover:text-slate-600 transition">
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+            
+            <div className="p-6 flex-1 overflow-y-auto">
+              {!isUpdating ? (
+                <>
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <p className="text-sm text-slate-500 font-medium">Phiên bản hiện tại</p>
+                      <p className="text-lg font-mono font-bold text-slate-700">v{CURRENT_VERSION}</p>
+                    </div>
+                    <ArrowUpCircle className="w-8 h-8 text-blue-300" />
+                    <div className="text-right">
+                      <p className="text-sm text-blue-600 font-medium">Phiên bản mới</p>
+                      <p className="text-lg font-mono font-black text-blue-700">v{updateInfo.version}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 mt-4">
+                    <p className="text-sm font-bold text-slate-800 mb-2">Chi tiết cập nhật:</p>
+                    <div className="text-sm text-slate-600 whitespace-pre-wrap font-mono leading-relaxed">
+                      {updateInfo.notes}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-8 text-center space-y-4">
+                  <div className="w-16 h-16 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div>
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-800">Đang tải bản cập nhật...</h3>
+                    <p className="text-sm text-slate-500 mt-1">Phần mềm sẽ tự động khởi động lại sau khi tải xong.<br/>Vui lòng không tắt cửa sổ này.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            {!isUpdating && (
+              <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
+                <button
+                  onClick={() => setShowUpdateModal(false)}
+                  className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-200 transition"
+                >
+                  Để sau
+                </button>
+                <button
+                  onClick={handleDoUpdate}
+                  className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 transition flex items-center"
+                >
+                  <ArrowUpCircle className="w-4 h-4 mr-1.5" />
+                  Cập nhật ngay
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isExporting && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm">
+          <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center max-w-sm w-full mx-4 text-center animate-in fade-in zoom-in duration-300">
+            <div className="relative mb-6">
+              <div className="w-16 h-16 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Download className="w-6 h-6 text-blue-600 animate-pulse" />
+              </div>
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Đang xuất dữ liệu</h3>
+            <p className="text-sm text-slate-500">
+              Vui lòng không tắt trình duyệt.<br/>
+              Hệ thống đang tải và nén thư mục ảnh, quá trình này có thể mất một lúc tùy số lượng ảnh.
+            </p>
+          </div>
+        </div>
       )}
     </div>
   );
