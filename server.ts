@@ -8,6 +8,8 @@ import * as dotenv from "dotenv";
 
 dotenv.config();
 
+const CURRENT_VERSION = "v1.1.0";
+
 const uploadsDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -89,6 +91,91 @@ function getGeminiClient(): GoogleGenAI {
   
   return client;
 }
+
+// AUTO-UPDATE ENDPOINTS
+app.get("/api/update/check", async (req, res) => {
+  try {
+    const response = await fetch("https://api.github.com/repos/ducnvhth/OCR_VEHICLE/releases/latest", {
+      headers: { "User-Agent": "OCR_VEHICLE_Updater" }
+    });
+    
+    if (!response.ok) {
+      return res.status(response.status).json({ success: false, error: "Không thể kết nối với GitHub API" });
+    }
+    
+    const data = await response.json();
+    const latestVersion = data.tag_name; // e.g. "v1.1.0"
+    const downloadUrl = data.assets?.find((a: any) => a.name.endsWith(".exe"))?.browser_download_url;
+
+    res.json({
+      success: true,
+      currentVersion: CURRENT_VERSION,
+      latestVersion,
+      hasUpdate: latestVersion !== CURRENT_VERSION,
+      downloadUrl,
+      notes: data.body
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/update/install", async (req, res) => {
+  try {
+    const { downloadUrl } = req.body;
+    if (!downloadUrl) return res.status(400).json({ success: false, error: "Thiếu đường dẫn tải xuống (downloadUrl)" });
+
+    console.log(`[Updater] Đang tải bản cập nhật từ: ${downloadUrl}`);
+    const response = await fetch(downloadUrl);
+    if (!response.ok) throw new Error(`Tải file thất bại: ${response.statusText}`);
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    const newExePath = path.join(process.cwd(), "update.exe");
+    
+    // Nơi executable đang chạy: nếu dùng "npm run dev", process.execPath là node.exe. 
+    // Khi dùng pkg, process.execPath chính là đường dẫn file OCR_Vehicle.exe đang chạy.
+    const currentExePath = process.execPath; 
+    
+    // Ghi file update.exe vào thư mục hiện tại
+    fs.writeFileSync(newExePath, buffer);
+    console.log(`[Updater] Tải xong, lưu tại: ${newExePath}`);
+
+    // Tạo file updater.bat để ghi đè file exe đang chạy
+    const batPath = path.join(process.cwd(), "updater.bat");
+    // Mã script bat: chờ 2 giây -> xoá file cũ -> đổi tên update.exe thành file cũ -> chạy lại -> tự xoá bat
+    const batContent = `
+@echo off
+echo Dang ap dung ban cap nhat... vui long doi!
+timeout /t 2 /nobreak > NUL
+del /f /q "${currentExePath}"
+rename "${newExePath}" "OCR_Vehicle.exe"
+start "" "OCR_Vehicle.exe"
+del "%~f0"
+`;
+    fs.writeFileSync(batPath, batContent, "utf-8");
+
+    // Khởi chạy file bat một cách độc lập (detached)
+    const child = spawn("cmd.exe", ["/c", batPath], {
+      detached: true,
+      stdio: "ignore",
+      cwd: process.cwd()
+    });
+    child.unref();
+
+    res.json({ success: true, message: "Bắt đầu cập nhật. Phần mềm sẽ tự động khởi động lại trong vài giây." });
+
+    // Thoát phần mềm hiện tại để script bat có quyền ghi đè file
+    setTimeout(() => {
+      process.exit(0);
+    }, 500);
+
+  } catch (error: any) {
+    console.error("[Updater] Lỗi cài đặt bản cập nhật:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // API Health Check
 app.get("/api/health", (req, res) => {

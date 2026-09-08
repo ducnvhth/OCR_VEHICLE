@@ -74,24 +74,18 @@ export function App() {
   const [isUpdating, setIsUpdating] = useState(false);
 
   // Fetch GitHub Releases for updates
+  // Fetch updates check from backend
   useEffect(() => {
-    fetch('https://api.github.com/repos/ducnvhth/OCR_VEHICLE/releases/latest')
+    fetch('/api/update/check')
       .then(res => res.json())
       .then(data => {
-        if (data && data.tag_name) {
-          const latestVersion = data.tag_name.replace('v', '');
-          const isNewer = latestVersion.localeCompare(CURRENT_VERSION, undefined, { numeric: true, sensitivity: 'base' }) > 0;
-          if (isNewer && data.assets && data.assets.length > 0) {
-            const exeAsset = data.assets.find((a: any) => a.name.endsWith('.exe'));
-            if (exeAsset) {
-              setUpdateInfo({
-                available: true,
-                url: exeAsset.browser_download_url,
-                version: latestVersion,
-                notes: data.body || 'Cập nhật phiên bản mới giúp cải thiện hiệu năng và vá lỗi.'
-              });
-            }
-          }
+        if (data.success && data.hasUpdate) {
+          setUpdateInfo({
+            available: true,
+            url: data.downloadUrl,
+            version: data.latestVersion,
+            notes: data.notes || 'Cập nhật phiên bản mới giúp cải thiện hiệu năng và vá lỗi.'
+          });
         }
       })
       .catch(console.error);
@@ -101,7 +95,7 @@ export function App() {
     if (!updateInfo) return;
     setIsUpdating(true);
     try {
-      const res = await fetch('/api/do-update', {
+      const res = await fetch('/api/update/install', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ downloadUrl: updateInfo.url })
