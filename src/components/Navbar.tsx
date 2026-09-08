@@ -1,5 +1,5 @@
 import React from 'react';
-import { Truck, UploadCloud, Database, Download, Trash2, AlertTriangle, CheckCircle2, ArrowUpCircle } from 'lucide-react';
+import { Download, Trash2, AlertTriangle, CheckCircle2, ArrowUpCircle, Image, Layers } from 'lucide-react';
 
 interface NavbarProps {
   totalRecords: number;
@@ -23,8 +23,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   totalVehicles,
   warningCount,
   threshold,
-  onUploadClick,
-  onUploadJournal,
   onExportExcel,
   onExportImages,
   onClearAll,
@@ -33,143 +31,139 @@ export const Navbar: React.FC<NavbarProps> = ({
   onShowUpdate,
   currentVersion,
 }) => {
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-
-  const handleJournalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      onUploadJournal(e.target.files[0]);
-    }
-  };
-
   return (
-    <header className="sticky top-0 z-30 bg-slate-900 border-b border-slate-800 text-slate-100 shadow-md">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex flex-wrap lg:flex-nowrap items-center justify-between py-3 gap-3">
-          
-          {/* Brand & Logo */}
-          <div className="flex items-center space-x-3 w-full md:w-auto justify-between md:justify-start">
-            <div className="flex items-center space-x-3">
-              <div>
-                <div className="flex items-center space-x-2 relative">
-                  <h1 className="text-base sm:text-lg font-black text-white tracking-tight uppercase">
-                    THỐNG KÊ SỐ LƯỢNG ẢNH THEO BIỂN SỐ XE
-                  </h1>
-                  {currentVersion && (
-                    <span className="hidden sm:inline-block px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[10px] font-mono font-bold rounded">
-                      v{currentVersion}
-                    </span>
-                  )}
-                  {updateInfo?.available && (
-                    <button
-                      onClick={onShowUpdate}
-                      className="absolute -right-32 sm:-right-36 inline-flex items-center space-x-1 px-2 py-0.5 bg-rose-500/20 text-rose-400 hover:bg-rose-500 hover:text-white border border-rose-500/50 rounded-full text-[10px] font-bold transition animate-pulse cursor-pointer"
-                      title="Có phiên bản mới"
-                    >
-                      <ArrowUpCircle className="w-3 h-3" />
-                      <span>Cập nhật (v{updateInfo.version})</span>
-                    </button>
-                  )}
-                </div>
-              </div>
+    <header className="sticky top-0 z-30 bg-[#0d1117] border-b border-slate-800/80 text-slate-100 shadow-xl">
+      <div className="max-w-[1600px] mx-auto px-5">
+        <div className="flex items-center justify-between h-14 gap-4">
+
+          {/* LEFT: Brand */}
+          <div className="flex items-center gap-3 shrink-0">
+            {/* Icon Mark */}
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/25 shrink-0">
+              <Layers className="w-4 h-4 text-white" />
             </div>
 
-            {/* Status indicators */}
-            <div className="hidden lg:flex items-center space-x-5 pl-6 border-l border-slate-800">
-              <div className="text-center">
-                <div className="text-[11px] font-medium text-slate-400">Tổng số ảnh</div>
-                <div className="text-sm font-bold text-blue-400 font-mono">{totalRecords}</div>
-              </div>
-              <div className="text-center">
-                <div className="text-[11px] font-medium text-slate-400">Số biển kiểm soát</div>
-                <div className="text-sm font-bold text-emerald-400 font-mono">{totalVehicles}</div>
-              </div>
-              <div className="text-center">
-                <div className="text-[11px] font-medium text-slate-400">Trạng thái cảnh báo</div>
-                {warningCount > 0 ? (
-                  <div className="text-xs font-bold text-rose-400 flex items-center justify-center gap-1">
-                    <AlertTriangle className="w-3.5 h-3.5" />
-                    {warningCount} biển thiếu ảnh
-                  </div>
-                ) : (
-                  <div className="text-xs font-bold text-emerald-400 flex items-center justify-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Tất cả đã đạt
-                  </div>
+            <div className="flex flex-col">
+              <span className="text-[13px] font-black text-white tracking-wide uppercase leading-tight">
+                Thống kê ảnh biển số xe
+              </span>
+              <div className="flex items-center gap-2">
+                {currentVersion && (
+                  <span className="text-[10px] font-mono font-semibold text-slate-500">
+                    v{currentVersion}
+                  </span>
+                )}
+                {updateInfo?.available && (
+                  <button
+                    onClick={onShowUpdate}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-500/15 text-amber-400 hover:bg-amber-500 hover:text-white border border-amber-500/40 rounded text-[9px] font-bold transition-all animate-pulse cursor-pointer"
+                    title="Có phiên bản mới"
+                  >
+                    <ArrowUpCircle className="w-2.5 h-2.5" />
+                    Cập nhật v{updateInfo.version}
+                  </button>
                 )}
               </div>
             </div>
           </div>
 
-          {/* Action Toolbar */}
-          <div className="flex flex-wrap items-center space-x-2 w-full md:w-auto justify-end overflow-visible pb-1 md:pb-0 shrink-0">
-            <button
-              onClick={onUploadClick}
-              className="inline-flex items-center px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white transition shadow-sm cursor-pointer shrink-0"
-              id="btn-upload-nav"
-            >
-              <UploadCloud className="w-4 h-4 mr-1.5" />
-              Tải Ảnh Lên
-            </button>
+          {/* CENTER: Stats */}
+          <div className="flex items-center gap-1 flex-1 justify-center">
+            {/* Total Images */}
+            <div className="flex items-center gap-2.5 px-4 py-1.5 rounded-xl bg-slate-800/60 border border-slate-700/50">
+              <div className="w-6 h-6 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                <Image className="w-3.5 h-3.5 text-blue-400" />
+              </div>
+              <div>
+                <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider leading-none mb-0.5">Tổng Ảnh</p>
+                <p className="text-base font-black text-blue-400 font-mono leading-none">{totalRecords}</p>
+              </div>
+            </div>
 
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept=".xlsx, .xls"
-              className="hidden"
-              onChange={handleJournalChange}
-            />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="inline-flex items-center px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white transition shadow-sm cursor-pointer shrink-0"
-              id="btn-upload-journal"
-              title="Upload file Nhật trình (Cột A: STT, Cột B: Biển số xe)"
-            >
-              <Database className="w-4 h-4 mr-1.5" />
-              Tải Nhật Trình
-            </button>
+            <div className="w-px h-8 bg-slate-700/50" />
 
-            {totalRecords > 0 && (
-              <>
-                <button
-                  onClick={onExportExcel}
-                  className="inline-flex items-center px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 transition cursor-pointer shrink-0"
-                  id="btn-export-csv"
-                >
-                  <Download className="w-4 h-4 mr-1.5" />
-                  Xuất Báo Cáo Excel
-                </button>
+            {/* Total Plates */}
+            <div className="flex items-center gap-2.5 px-4 py-1.5 rounded-xl bg-slate-800/60 border border-slate-700/50">
+              <div className="w-6 h-6 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+                <Layers className="w-3.5 h-3.5 text-emerald-400" />
+              </div>
+              <div>
+                <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider leading-none mb-0.5">Số Biển</p>
+                <p className="text-base font-black text-emerald-400 font-mono leading-none">{totalVehicles}</p>
+              </div>
+            </div>
 
-                <button
-                  onClick={onExportImages}
-                  disabled={isExporting}
-                  className="inline-flex items-center px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700 transition cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                  id="btn-export-images"
-                >
-                  {isExporting ? (
-                    <>
-                      <Download className="w-4 h-4 mr-1.5 animate-spin" />
-                      Đang nén file...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-4 h-4 mr-1.5" />
-                      Xuất Folder Ảnh
-                    </>
-                  )}
-                </button>
+            <div className="w-px h-8 bg-slate-700/50" />
 
-                <button
-                  onClick={onClearAll}
-                  className="inline-flex items-center px-2.5 py-2 rounded-xl text-xs font-medium bg-slate-800 hover:bg-rose-950 hover:text-rose-400 text-slate-400 border border-slate-700 transition cursor-pointer shrink-0"
-                  title="Xóa tất cả dữ liệu"
-                  id="btn-clear-all"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </>
-            )}
+            {/* Warning Status */}
+            <div className="flex items-center gap-2.5 px-4 py-1.5 rounded-xl bg-slate-800/60 border border-slate-700/50">
+              {warningCount > 0 ? (
+                <>
+                  <div className="w-6 h-6 rounded-lg bg-rose-500/20 flex items-center justify-center">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider leading-none mb-0.5">Cảnh Báo</p>
+                    <p className="text-base font-black text-rose-400 font-mono leading-none">{warningCount} biển</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="w-6 h-6 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider leading-none mb-0.5">Trạng Thái</p>
+                    <p className="text-[11px] font-black text-emerald-400 leading-none">Đạt tiêu chuẩn</p>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
+          {/* RIGHT: Actions */}
+          {totalRecords > 0 && (
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={onExportExcel}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-emerald-600/10 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-600/30 hover:border-emerald-600 transition-all cursor-pointer"
+                id="btn-export-csv"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Xuất Excel
+              </button>
+
+              <button
+                onClick={onExportImages}
+                disabled={isExporting}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-blue-600/10 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-600/30 hover:border-blue-600 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                id="btn-export-images"
+              >
+                {isExporting ? (
+                  <>
+                    <Download className="w-3.5 h-3.5 animate-bounce" />
+                    Đang nén...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-3.5 h-3.5" />
+                    Xuất Ảnh
+                  </>
+                )}
+              </button>
+
+              <div className="w-px h-6 bg-slate-700/60" />
+
+              <button
+                onClick={onClearAll}
+                className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/30 transition-all cursor-pointer"
+                title="Xóa tất cả dữ liệu"
+                id="btn-clear-all"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>

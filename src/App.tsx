@@ -83,7 +83,8 @@ export function App() {
           setUpdateInfo({
             available: true,
             url: data.downloadUrl,
-            version: data.latestVersion,
+            // Bỏ ký tự 'v' đứng đầu để tránh hiển thị 'vv1.1.1'
+            version: (data.latestVersion || '').replace(/^v/i, ''),
             notes: data.notes || 'Cập nhật phiên bản mới giúp cải thiện hiệu năng và vá lỗi.'
           });
         }
@@ -104,8 +105,13 @@ export function App() {
       if (!data.success) {
         alert('Lỗi cập nhật: ' + data.error);
         setIsUpdating(false);
+      } else if (data.message && data.message.includes("Dev Mode")) {
+        // Xử lý riêng cho lúc Test ở chế độ Dev
+        alert(data.message);
+        setIsUpdating(false);
+        setShowUpdateModal(false);
       }
-      // If success, backend will restart the exe. Just keep loading.
+      // If success (Production), backend will restart the exe. Just keep loading.
     } catch(e) {
       console.error(e);
       // Connection will drop when backend restarts

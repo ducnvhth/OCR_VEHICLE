@@ -8,7 +8,7 @@ import * as dotenv from "dotenv";
 
 dotenv.config();
 
-const CURRENT_VERSION = "v1.1.0";
+// Version will be read dynamically from package.json inside the API
 
 const uploadsDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadsDir)) {
@@ -95,6 +95,10 @@ function getGeminiClient(): GoogleGenAI {
 // AUTO-UPDATE ENDPOINTS
 app.get("/api/update/check", async (req, res) => {
   try {
+    const pkgPath = path.join(process.cwd(), 'package.json');
+    const packageJson = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+    const CURRENT_VERSION = "v" + (packageJson.version || "1.0.0").trim();
+
     const response = await fetch("https://api.github.com/repos/ducnvhth/OCR_VEHICLE/releases/latest", {
       headers: { "User-Agent": "OCR_VEHICLE_Updater" }
     });
@@ -104,14 +108,17 @@ app.get("/api/update/check", async (req, res) => {
     }
     
     const data = await response.json();
-    const latestVersion = data.tag_name; // e.g. "v1.1.0"
+    const latestVersion = (data.tag_name || "").trim();
     const downloadUrl = data.assets?.find((a: any) => a.name.endsWith(".exe"))?.browser_download_url;
+
+    const hasUpdate = latestVersion !== CURRENT_VERSION;
+    console.log(`[Update Check] Hiện tại: ${CURRENT_VERSION}, GitHub: ${latestVersion}, Có update: ${hasUpdate}`);
 
     res.json({
       success: true,
       currentVersion: CURRENT_VERSION,
       latestVersion,
-      hasUpdate: latestVersion !== CURRENT_VERSION,
+      hasUpdate,
       downloadUrl,
       notes: data.body
     });
@@ -142,7 +149,16 @@ app.post("/api/update/install", async (req, res) => {
     fs.writeFileSync(newExePath, buffer);
     console.log(`[Updater] Tải xong, lưu tại: ${newExePath}`);
 
-    // Tạo file updater.bat để ghi đè file exe đang chạy
+    // Bảo vệ khi đang chạy npm run dev (node.exe)
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[Updater] Đang chạy ở chế độ DEV. Bỏ qua bước ghi đè file exe.");
+      return res.json({ 
+        success: true, 
+        message: "Chế độ Test (Dev Mode): Đã tải file update.exe thành công, nhưng không ghi đè để bảo vệ hệ thống." 
+      });
+    }
+
+    // Tạo file updater.bat để ghi đè file exe đang chạy (Chỉ chạy ở môi trường pkg/production)
     const batPath = path.join(process.cwd(), "updater.bat");
     // Mã script bat: chờ 2 giây -> xoá file cũ -> đổi tên update.exe thành file cũ -> chạy lại -> tự xoá bat
     const batContent = `
