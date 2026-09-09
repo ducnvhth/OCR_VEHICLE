@@ -1,0 +1,17 @@
+[
+  {
+    "id": "default",
+    "name": "Nhà Xe Mặc Định",
+    "minPhotoThreshold": 4
+  },
+  {
+    "id": "prof_mtualiqx",
+    "name": "Mỏ 4 chuyến",
+    "minPhotoThreshold": 4
+  },
+  {
+    "id": "prof_mtualsg8",
+    "name": "Mỏ 6 chuyến",
+    "minPhotoThreshold": 6
+  }
+]

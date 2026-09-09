@@ -15,9 +15,10 @@ interface ManualEntryModalProps {
   onClose: () => void;
   onSaved: (records: any[]) => void;
   uniquePlates?: string[];
+  activeProfileId: string;
 }
 
-export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({ onClose, onSaved, uniquePlates = [] }) => {
+export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({ onClose, onSaved, uniquePlates = [], activeProfileId }) => {
   const now = new Date();
   const todayDate = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
   const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -116,6 +117,7 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({ onClose, onS
         formattedTime: timeVal,
         location: location.trim(),
         notes: notes.trim(),
+        profileId: activeProfileId
       };
 
       if (imgItem) {

@@ -277,7 +277,7 @@ async function fetchImageAsBase64(url: string): Promise<string | null> {
   }
 }
 
-export async function downloadXlsx(records: ExtractionRecord[], threshold: number = 4, tripGapMinutes: number = 60) {
+export async function downloadXlsx(records: ExtractionRecord[], threshold: number = 4, profileName?: string) {
   if (records.length === 0) return;
 
   const workbook = new ExcelJS.Workbook();
@@ -398,13 +398,17 @@ export async function downloadXlsx(records: ExtractionRecord[], threshold: numbe
 
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  saveAs(blob, `thong_ke_bien_so_xe_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  const fileName = profileName 
+    ? `ThongKe_${profileName.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`
+    : `thong_ke_bien_so_xe_${new Date().toISOString().slice(0, 10)}.xlsx`;
+  saveAs(blob, fileName);
 }
 
 export async function downloadImagesZip(
   records: ExtractionRecord[], 
   journalMapping?: Record<string, string[]>,
-  tripGapMinutes: number = 60
+  tripGapMinutes: number = 60,
+  profileName?: string
 ) {
   if (records.length === 0) return;
 
@@ -465,10 +469,13 @@ export async function downloadImagesZip(
   }
 
   const content = await zip.generateAsync({ type: "blob" });
-  saveAs(content, `hinh_anh_bien_so_${new Date().toISOString().slice(0, 10)}.rar`);
+  const fileName = profileName 
+    ? `HinhAnh_${profileName.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.rar`
+    : `hinh_anh_bien_so_${new Date().toISOString().slice(0, 10)}.rar`;
+  saveAs(content, fileName);
 }
 
-export async function exportJournalXlsx(entries: any[], records?: ExtractionRecord[], tripGapMinutes: number = 60) {
+export async function exportJournalXlsx(entries: any[], records?: ExtractionRecord[], tripGapMinutes: number = 60, profileName?: string) {
   if (entries.length === 0) return;
 
   let grouped: any[] = [];
@@ -540,5 +547,8 @@ export async function exportJournalXlsx(entries: any[], records?: ExtractionReco
 
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  saveAs(blob, `nhat_trinh_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  const fileName = profileName
+    ? `NhatTrinh_${profileName.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`
+    : `nhat_trinh_${new Date().toISOString().slice(0, 10)}.xlsx`;
+  saveAs(blob, fileName);
 }

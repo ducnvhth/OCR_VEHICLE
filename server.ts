@@ -37,6 +37,24 @@ function writeDb(records: any[]) {
   fs.writeFileSync(dbPath, JSON.stringify(records, null, 2), "utf-8");
 }
 
+const profilesDbPath = path.join(process.cwd(), "profiles.json");
+function readProfilesDb(): any[] {
+  if (!fs.existsSync(profilesDbPath)) {
+    // Migrate: Create default profile if not exists
+    const defaultProfile = [{ id: "default", name: "Nhà Xe Mặc Định", minPhotoThreshold: 4 }];
+    writeProfilesDb(defaultProfile);
+    return defaultProfile;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(profilesDbPath, "utf-8"));
+  } catch (e) {
+    return [{ id: "default", name: "Nhà Xe Mặc Định", minPhotoThreshold: 4 }];
+  }
+}
+function writeProfilesDb(profiles: any[]) {
+  fs.writeFileSync(profilesDbPath, JSON.stringify(profiles, null, 2), "utf-8");
+}
+
 const journalDbPath = path.join(process.cwd(), "journal.json");
 function readJournalDb(): any[] {
   if (!fs.existsSync(journalDbPath)) return [];
@@ -95,9 +113,7 @@ function getGeminiClient(): GoogleGenAI {
 // AUTO-UPDATE ENDPOINTS
 app.get("/api/update/check", async (req, res) => {
   try {
-    const pkgPath = path.join(process.cwd(), 'package.json');
-    const packageJson = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-    const CURRENT_VERSION = "v" + (packageJson.version || "1.0.0").trim();
+    const CURRENT_VERSION = req.query.currentVersion ? "v" + String(req.query.currentVersion).replace(/^v/i, '').trim() : "v1.0.0";
 
     const response = await fetch("https://api.github.com/repos/ducnvhth/OCR_VEHICLE/releases/latest", {
       headers: { "User-Agent": "OCR_VEHICLE_Updater" }
@@ -264,17 +280,19 @@ del "%~f0"
 
 // Fetch all saved records from DB
 app.get("/api/records", (req, res) => {
-  const records = readDb();
+  const profileId = req.query.profileId || "default";
+  const records = readDb().filter((r: any) => !r.profileId || r.profileId === profileId);
   res.json({ success: true, records });
 });
 
 // Delete a single record from DB
 app.delete("/api/records/:id", (req, res) => {
   const id = req.params.id;
+  const profileId = req.query.profileId || "default";
   let records = readDb();
   
   // Find record to delete its associated image file
-  const recordToDelete = records.find(r => r.id === id);
+  const recordToDelete = records.find(r => r.id === id && (!r.profileId || r.profileId === profileId));
   if (recordToDelete && recordToDelete.imageSrc) {
     try {
       const fileName = recordToDelete.imageSrc.split('/').pop();
@@ -289,28 +307,37 @@ app.delete("/api/records/:id", (req, res) => {
     }
   }
 
-  records = records.filter(r => r.id !== id);
+  records = records.filter(r => !(r.id === id && (!r.profileId || r.profileId === profileId)));
   writeDb(records);
   res.json({ success: true });
 });
 
-// Delete all records
+// Delete all records for a specific profile
 app.delete("/api/records", (req, res) => {
-  writeDb([]);
+  const profileId = req.query.profileId || "default";
+  let records = readDb();
   
-  // Delete all physical files in uploads directory
-  try {
-    if (fs.existsSync(uploadsDir)) {
-      const files = fs.readdirSync(uploadsDir);
-      for (const file of files) {
-        if (file !== '.gitkeep') {
-          fs.unlinkSync(path.join(uploadsDir, file));
+  // Find records to delete their physical files
+  const recordsToDelete = records.filter((r: any) => !r.profileId || r.profileId === profileId);
+  recordsToDelete.forEach(record => {
+    if (record.imageSrc) {
+      try {
+        const fileName = record.imageSrc.split('/').pop();
+        if (fileName) {
+          const imagePath = path.join(uploadsDir, fileName);
+          if (fs.existsSync(imagePath)) {
+            fs.unlinkSync(imagePath);
+          }
         }
+      } catch (err) {
+        console.error("Error deleting image file:", err);
       }
     }
-  } catch (err) {
-    console.error("Error clearing uploads directory:", err);
-  }
+  });
+
+  // Keep records that belong to other profiles
+  records = records.filter((r: any) => r.profileId && r.profileId !== profileId && r.profileId !== "default");
+  writeDb(records);
 
   res.json({ success: true });
 });
@@ -318,10 +345,11 @@ app.delete("/api/records", (req, res) => {
 // Update a single record
 app.put("/api/records/:id", express.json(), (req, res) => {
   const id = req.params.id;
+  const profileId = req.query.profileId || "default";
   const updatedData = req.body;
   let records = readDb();
   
-  const index = records.findIndex((r: any) => r.id === id);
+  const index = records.findIndex((r: any) => r.id === id && (!r.profileId || r.profileId === profileId));
   if (index !== -1) {
     // Preserve imageSrc backward compatibility and merge new data
     records[index] = { ...records[index], ...updatedData, isEdited: true };
@@ -333,17 +361,21 @@ app.put("/api/records/:id", express.json(), (req, res) => {
 
 // JOURNAL ENDPOINTS
 app.get("/api/journal", (req, res) => {
-  const records = readJournalDb();
+  const profileId = req.query.profileId || "default";
+  const records = readJournalDb().filter((r: any) => !r.profileId || r.profileId === profileId);
   res.json({ success: true, records });
 });
 
 app.post("/api/journal", express.json(), (req, res) => {
   const newEntry = req.body;
+  const profileId = req.query.profileId || "default";
+  newEntry.profileId = profileId;
   let records = readJournalDb();
 
   // Server tự tính STT để tránh race condition từ client
-  const maxStt = records.length > 0
-    ? Math.max(...records.map((r: any) => parseInt(r.stt, 10) || 0))
+  const filteredRecords = records.filter((r: any) => !r.profileId || r.profileId === profileId);
+  const maxStt = filteredRecords.length > 0
+    ? Math.max(...filteredRecords.map((r: any) => parseInt(r.stt, 10) || 0))
     : 0;
   newEntry.stt = (maxStt + 1).toString();
 
@@ -354,10 +386,11 @@ app.post("/api/journal", express.json(), (req, res) => {
 
 app.put("/api/journal/:id", express.json(), (req, res) => {
   const id = req.params.id;
+  const profileId = req.query.profileId || "default";
   const updatedData = req.body;
   let records = readJournalDb();
   
-  const index = records.findIndex((r: any) => r.id === id);
+  const index = records.findIndex((r: any) => r.id === id && (!r.profileId || r.profileId === profileId));
   if (index !== -1) {
     records[index] = { ...records[index], ...updatedData };
     writeJournalDb(records);
@@ -368,20 +401,25 @@ app.put("/api/journal/:id", express.json(), (req, res) => {
 
 app.delete("/api/journal/:id", (req, res) => {
   const id = req.params.id;
+  const profileId = req.query.profileId || "default";
   let records = readJournalDb();
-  records = records.filter(r => r.id !== id);
+  records = records.filter(r => !(r.id === id && (!r.profileId || r.profileId === profileId)));
   writeJournalDb(records);
   res.json({ success: true });
 });
 
-// Delete all journal entries
+// Delete all journal entries for a specific profile
 app.delete("/api/journal", (req, res) => {
-  writeJournalDb([]);
+  const profileId = req.query.profileId || "default";
+  let records = readJournalDb();
+  records = records.filter((r: any) => r.profileId && r.profileId !== profileId && r.profileId !== "default");
+  writeJournalDb(records);
   res.json({ success: true });
 });
 
 app.post("/api/journal/batch", express.json(), (req, res) => {
   const { mapping } = req.body;
+  const profileId = req.query.profileId || "default";
   let records = readJournalDb();
   
   // Convert mapping (plate -> stt array) to array of entries and merge
@@ -389,15 +427,16 @@ app.post("/api/journal/batch", express.json(), (req, res) => {
     const sttArray = mapping[plate];
     
     if (Array.isArray(sttArray)) {
-      // Xóa tất cả các bản ghi nhật trình cũ của biển số này
-      records = records.filter(r => r.licensePlate !== plate);
+      // Xóa tất cả các bản ghi nhật trình cũ của biển số này thuộc profile này
+      records = records.filter(r => !(r.licensePlate === plate && (!r.profileId || r.profileId === profileId)));
       
       // Thêm lại các bản ghi mới theo đúng thứ tự mảng STT (thứ tự thời gian)
       sttArray.forEach((stt, index) => {
         records.push({
           id: "jrn_" + Date.now() + "_" + index + "_" + Math.random().toString(36).substring(2, 7),
           licensePlate: plate,
-          stt: stt
+          stt: stt,
+          profileId: profileId
         });
       });
     }
@@ -420,6 +459,7 @@ app.post("/api/records/manual", async (req, res) => {
       location,
       notes,
       parsedDateISO,
+      profileId = "default"
     } = req.body;
 
     if (!licensePlate || !formattedTime || !formattedDate) {
@@ -482,6 +522,7 @@ app.post("/api/records/manual", async (req, res) => {
       notes: notes || "Nhập thủ công",
       processedAt: new Date().toLocaleTimeString("vi-VN"),
       isManual: true,
+      profileId: profileId
     };
 
     const dbRecords = readDb();
@@ -501,7 +542,7 @@ app.post("/api/records/manual", async (req, res) => {
 // Image Analysis Endpoint using Gemini 3.6 Flash
 app.post("/api/analyze-image", async (req, res) => {
   try {
-    const { imageBase64, mimeType = "image/jpeg", fileName = "image.jpg" } = req.body;
+    const { imageBase64, mimeType = "image/jpeg", fileName = "image.jpg", profileId = "default" } = req.body;
 
     if (!imageBase64) {
       return res.status(400).json({ error: "Thừa số imageBase64 không được bỏ trống." });
@@ -655,6 +696,7 @@ Nhiệm vụ chính của bạn là trích xuất 2 THÔNG TIN QUAN TRỌNG NH�
       confidence: Math.round(result.confidence || 95),
       notes: result.notes || "Trích xuất biển số & thời gian thành công",
       processedAt: new Date().toLocaleTimeString("vi-VN"),
+      profileId: profileId
     };
 
     // Save to DB
@@ -670,6 +712,54 @@ Nhiệm vụ chính của bạn là trích xuất 2 THÔNG TIN QUAN TRỌNG NH�
       error: error?.message || "Đã xảy ra lỗi trong quá trình nhận diện hình ảnh.",
     });
   }
+});
+
+// PROFILES ENDPOINTS
+app.get("/api/profiles", (req, res) => {
+  const profiles = readProfilesDb();
+  res.json({ success: true, profiles });
+});
+
+app.post("/api/profiles", express.json(), (req, res) => {
+  const newProfile = req.body;
+  if (!newProfile.id || !newProfile.name) {
+    return res.status(400).json({ success: false, error: "ID và tên nhà xe là bắt buộc." });
+  }
+  const profiles = readProfilesDb();
+  if (profiles.find((p: any) => p.id === newProfile.id)) {
+    return res.status(400).json({ success: false, error: "ID nhà xe đã tồn tại." });
+  }
+  profiles.push({
+    id: newProfile.id,
+    name: newProfile.name,
+    minPhotoThreshold: newProfile.minPhotoThreshold || 4
+  });
+  writeProfilesDb(profiles);
+  res.json({ success: true, profile: newProfile });
+});
+
+app.put("/api/profiles/:id", express.json(), (req, res) => {
+  const id = req.params.id;
+  const updatedData = req.body;
+  const profiles = readProfilesDb();
+  const index = profiles.findIndex((p: any) => p.id === id);
+  if (index !== -1) {
+    profiles[index] = { ...profiles[index], ...updatedData };
+    writeProfilesDb(profiles);
+    return res.json({ success: true, profile: profiles[index] });
+  }
+  return res.status(404).json({ success: false, error: "Profile not found" });
+});
+
+app.delete("/api/profiles/:id", (req, res) => {
+  const id = req.params.id;
+  if (id === "default") {
+    return res.status(400).json({ success: false, error: "Không thể xóa nhà xe mặc định." });
+  }
+  let profiles = readProfilesDb();
+  profiles = profiles.filter((p: any) => p.id !== id);
+  writeProfilesDb(profiles);
+  res.json({ success: true });
 });
 
 // Start Express and integrate Vite

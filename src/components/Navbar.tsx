@@ -16,6 +16,10 @@ interface NavbarProps {
   updateInfo?: { available: boolean, url: string, version: string, notes: string } | null;
   onShowUpdate?: () => void;
   currentVersion?: string;
+  profiles: { id: string, name: string }[];
+  activeProfileId: string;
+  setActiveProfileId: (id: string) => void;
+  onManageProfiles: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -30,6 +34,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   updateInfo = null,
   onShowUpdate,
   currentVersion,
+  profiles,
+  activeProfileId,
+  setActiveProfileId,
+  onManageProfiles,
 }) => {
   return (
     <header className="sticky top-0 z-30 bg-[#0d1117] border-b border-slate-800/80 text-slate-100 shadow-xl">
@@ -65,6 +73,28 @@ export const Navbar: React.FC<NavbarProps> = ({
                 )}
               </div>
             </div>
+          </div>
+
+          {/* PROFILE SELECTOR */}
+          <div className="flex items-center gap-2 bg-slate-800/50 rounded-lg p-1 border border-slate-700/50 shrink-0 mx-4">
+            <select
+              value={activeProfileId}
+              onChange={(e) => setActiveProfileId(e.target.value)}
+              className="bg-transparent text-sm font-semibold text-white px-2 py-1 outline-none cursor-pointer focus:ring-0 min-w-[120px]"
+            >
+              {profiles.map(p => (
+                <option key={p.id} value={p.id} className="bg-slate-800 text-white">
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={onManageProfiles}
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
+              title="Quản lý nhà xe"
+            >
+              <Layers className="w-4 h-4" />
+            </button>
           </div>
 
           {/* CENTER: Stats */}

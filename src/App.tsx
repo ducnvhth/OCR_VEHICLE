@@ -10,51 +10,74 @@ import { DataTable } from './components/DataTable';
 import { VehicleDetailModal } from './components/VehicleDetailModal';
 import { JournalManager } from './components/JournalManager';
 import { ManualEntryModal } from './components/ManualEntryModal';
+import { ProfileManagerModal } from './components/ProfileManagerModal';
 import { Layers, BarChart3, Table as TableIcon, Search, RefreshCw, Filter, AlertTriangle, CheckCircle2, X, Database, ChevronDown, Download, ArrowUpCircle } from 'lucide-react';
 import packageJson from '../package.json';
 
 const CURRENT_VERSION = packageJson.version || '1.0.0';
 
+export interface Profile {
+  id: string;
+  name: string;
+  minPhotoThreshold: number;
+}
+
 export function App() {
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState<string>('default');
+
   const [records, setRecords] = useState<ExtractionRecord[]>([]);
   const [journalEntries, setJournalEntries] = useState<any[]>([]);
+  const [minPhotoThreshold, setMinPhotoThreshold] = useState<number>(4);
 
-  // Tải dữ liệu cũ từ Database (backend) khi vừa vào trang
+  // Fetch profiles on mount
   useEffect(() => {
+    fetch('/api/profiles')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.profiles && data.profiles.length > 0) {
+          setProfiles(data.profiles);
+          // Set to default or the first one if default doesn't exist
+          const defaultProf = data.profiles.find((p: Profile) => p.id === 'default') || data.profiles[0];
+          if (defaultProf) {
+            setActiveProfileId(defaultProf.id);
+            setMinPhotoThreshold(defaultProf.minPhotoThreshold || 4);
+          }
+        }
+      })
+      .catch(err => console.error("Error fetching profiles:", err));
+  }, []);
+
+  // Tải dữ liệu cũ từ Database (backend) khi đổi profile
+  useEffect(() => {
+    if (!activeProfileId) return;
+    
     let cancelled = false;
     Promise.all([
-      fetch('/api/records').then(r => r.json()),
-      fetch('/api/journal').then(r => r.json()),
+      fetch(`/api/records?profileId=${activeProfileId}`).then(r => r.json()),
+      fetch(`/api/journal?profileId=${activeProfileId}`).then(r => r.json()),
     ]).then(async ([recordsData, journalData]) => {
       if (cancelled) return;
       const loadedRecords = (recordsData.success && recordsData.records) ? recordsData.records : [];
       const loadedJournal: any[] = (journalData.success && journalData.records) ? journalData.records : [];
 
       if (loadedRecords.length > 0) setRecords(loadedRecords);
+      else setRecords([]);
 
       if (loadedJournal.length > 0) {
-        // Nếu đã có journal, ta chỉ lưu vào state.
-        // Việc đồng bộ nếu thiếu sẽ do useEffect tự động đảm nhiệm.
         if (!cancelled) setJournalEntries(loadedJournal);
       } else if (loadedRecords.length > 0) {
-        // Nhật trình rỗng nhưng có records → việc tự đồng bộ sẽ do useEffect tự động đảm nhiệm.
-        // Ta chỉ cần set rỗng ở đây.
         if (!cancelled) setJournalEntries([]);
+      } else {
+        setJournalEntries([]);
       }
     }).catch(err => console.error('Lỗi khi tải dữ liệu từ DB:', err));
     return () => { cancelled = true; };
-  }, []);
-
-  // Minimum photo threshold state (user can set e.g. 4 photos per plate)
-  const [minPhotoThreshold, setMinPhotoThreshold] = useState<number>(() => {
-    const savedThreshold = localStorage.getItem('min_photo_threshold');
-    return savedThreshold ? parseInt(savedThreshold, 10) || 4 : 4;
-  });
-
-
+  }, [activeProfileId]);
 
   const [activeTab, setActiveTab] = useState<'grouped' | 'analytics' | 'table' | 'journal'>('grouped');
   const [showManualEntry, setShowManualEntry] = useState(false);
+  const [showProfileManager, setShowProfileManager] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [sttSearchTerm, setSttSearchTerm] = useState('');
   const [selectedRecord, setSelectedRecord] = useState<ExtractionRecord | null>(null);
@@ -72,7 +95,7 @@ export function App() {
   // Fetch GitHub Releases for updates
   // Fetch updates check from backend
   useEffect(() => {
-    fetch('/api/update/check')
+    fetch(`/api/update/check?currentVersion=${CURRENT_VERSION}`)
       .then(res => res.json())
       .then(data => {
         if (data.success && data.hasUpdate) {
@@ -142,7 +165,7 @@ export function App() {
     return mapping;
   }, [journalEntries]);
 
-  // Persist records & threshold to localStorage
+  // Persist records to localStorage
   useEffect(() => {
     try {
       localStorage.setItem('license_plate_records', JSON.stringify(records));
@@ -151,11 +174,24 @@ export function App() {
     }
   }, [records]);
 
+  // Update profile threshold when minPhotoThreshold changes
   useEffect(() => {
-    localStorage.setItem('min_photo_threshold', minPhotoThreshold.toString());
-  }, [minPhotoThreshold]);
-
-
+    if (activeProfileId) {
+      const activeProfile = profiles.find(p => p.id === activeProfileId);
+      if (activeProfile && activeProfile.minPhotoThreshold !== minPhotoThreshold) {
+        fetch(`/api/profiles/${activeProfileId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ minPhotoThreshold })
+        }).catch(err => console.error("Error saving threshold:", err));
+        
+        // Update local profiles list
+        setProfiles(prev => prev.map(p => 
+          p.id === activeProfileId ? { ...p, minPhotoThreshold } : p
+        ));
+      }
+    }
+  }, [minPhotoThreshold, activeProfileId]);
 
   // Check health endpoint for API key
   useEffect(() => {
@@ -172,11 +208,68 @@ export function App() {
       });
   }, []);
 
+  // Profile Handlers
+  const handleAddProfile = async (profileData: Omit<Profile, 'id'>) => {
+    const newId = "prof_" + Date.now().toString(36);
+    try {
+      const res = await fetch('/api/profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: newId, ...profileData })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setProfiles(prev => [...prev, data.profile]);
+        setActiveProfileId(data.profile.id);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Lỗi thêm nhà xe');
+    }
+  };
+
+  const handleUpdateProfile = async (id: string, updates: Partial<Profile>) => {
+    try {
+      const res = await fetch(`/api/profiles/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      const data = await res.json();
+      if (data.success) {
+        setProfiles(prev => prev.map(p => p.id === id ? data.profile : p));
+        if (activeProfileId === id && updates.minPhotoThreshold) {
+          setMinPhotoThreshold(updates.minPhotoThreshold);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Lỗi cập nhật nhà xe');
+    }
+  };
+
+  const handleDeleteProfile = async (id: string) => {
+    try {
+      const res = await fetch(`/api/profiles/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        setProfiles(prev => prev.filter(p => p.id !== id));
+        if (activeProfileId === id) {
+          setActiveProfileId('default');
+        }
+      } else {
+        alert(data.error || 'Lỗi xóa nhà xe');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Lỗi xóa nhà xe');
+    }
+  };
+
   // Grouped vehicles by threshold
   const groupedVehicles = useMemo(() => {
     return groupRecordsByLicensePlate(records, minPhotoThreshold);
   }, [records, minPhotoThreshold]);
-
 
   // Filtered grouped vehicles
   const filteredGroups = useMemo(() => {
@@ -231,7 +324,7 @@ export function App() {
   const autoAppendToJournal = async (plates: string[]) => {
     try {
       // Lấy danh sách nhật trình mới nhất từ server để tính STT chuẩn
-      const res = await fetch('/api/journal');
+      const res = await fetch(`/api/journal?profileId=${activeProfileId}`);
       const data = await res.json();
       let currentMax = 0;
       if (data.success && Array.isArray(data.records) && data.records.length > 0) {
@@ -249,10 +342,10 @@ export function App() {
 
       // Gửi lên server từng cái
       for (const entry of newEntries) {
-        await fetch('/api/journal', {
+        await fetch(`/api/journal?profileId=${activeProfileId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(entry),
+          body: JSON.stringify({ ...entry, profileId: activeProfileId }),
         });
       }
 
@@ -390,7 +483,7 @@ export function App() {
         const base64 = await fileToBase64(file);
 
         // Call backend API
-        const response = await fetch('/api/analyze-image', {
+        const response = await fetch(`/api/analyze-image`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -399,6 +492,7 @@ export function App() {
             imageBase64: base64,
             mimeType: file.type || 'image/jpeg',
             fileName: file.name,
+            profileId: activeProfileId
           }),
         });
 
@@ -437,7 +531,7 @@ export function App() {
   const handleClearAll = () => {
     if (window.confirm('Bạn có chắc chắn muốn xóa toàn bộ dữ liệu trích xuất và nhật trình?')) {
       // Xóa records
-      fetch('/api/records', { method: 'DELETE' })
+      fetch(`/api/records?profileId=${activeProfileId}`, { method: 'DELETE' })
         .then(() => {
           setRecords([]);
           localStorage.removeItem('license_plate_records');
@@ -445,7 +539,7 @@ export function App() {
         .catch(err => console.error("Lỗi xóa DB:", err));
 
       // Xóa nhật trình
-      fetch('/api/journal', { method: 'DELETE' })
+      fetch(`/api/journal?profileId=${activeProfileId}`, { method: 'DELETE' })
         .then(() => {
           setJournalEntries([]);
         })
@@ -454,13 +548,15 @@ export function App() {
   };
 
   const handleExportExcel = () => {
-    downloadXlsx(records, minPhotoThreshold);
+    const profile = profiles.find(p => p.id === activeProfileId);
+    downloadXlsx(records, minPhotoThreshold, profile?.name);
   };
 
   const handleExportImages = async () => {
     setIsExporting(true);
     try {
-      await downloadImagesZip(records, journalMapping);
+      const profile = profiles.find(p => p.id === activeProfileId);
+      await downloadImagesZip(records, journalMapping, 60, profile?.name);
     } catch (err) {
       console.error(err);
       alert('Có lỗi xảy ra khi xuất folder ảnh.');
@@ -471,7 +567,8 @@ export function App() {
 
   const handleExportJournal = (sortedEntries?: any[]) => {
     const entriesToExport = sortedEntries && sortedEntries.length > 0 ? sortedEntries : journalEntries;
-    exportJournalXlsx(entriesToExport, records);
+    const profile = profiles.find(p => p.id === activeProfileId);
+    exportJournalXlsx(entriesToExport, records, 60, profile?.name);
   };
 
   const handleUploadJournal = async (file: File) => {
@@ -523,7 +620,7 @@ export function App() {
       });
 
       // Send to backend batch API
-      const res = await fetch('/api/journal/batch', {
+      const res = await fetch(`/api/journal/batch?profileId=${activeProfileId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mapping: newMapping }),
@@ -542,7 +639,7 @@ export function App() {
   };
 
   const handleAddJournal = async (entry: any) => {
-    const res = await fetch('/api/journal', {
+    const res = await fetch(`/api/journal?profileId=${activeProfileId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -561,7 +658,7 @@ export function App() {
     const oldEntry = journalEntries.find(e => e.id === id);
     const oldPlate = oldEntry ? oldEntry.licensePlate : '';
 
-    const res = await fetch(`/api/journal/${id}`, {
+    const res = await fetch(`/api/journal/${id}?profileId=${activeProfileId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(entry),
@@ -575,7 +672,7 @@ export function App() {
         const recordsToUpdate = records.filter(r => r.licensePlate === oldPlate);
         if (recordsToUpdate.length > 0) {
           recordsToUpdate.forEach(r => {
-            fetch(`/api/records/${r.id}`, {
+            fetch(`/api/records/${r.id}?profileId=${activeProfileId}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ ...r, licensePlate: entry.licensePlate }),
@@ -589,7 +686,7 @@ export function App() {
   };
 
   const handleDeleteJournal = async (id: string) => {
-    const res = await fetch(`/api/journal/${id}`, {
+    const res = await fetch(`/api/journal/${id}?profileId=${activeProfileId}`, {
       method: 'DELETE',
     });
     const data = await res.json();
@@ -600,7 +697,7 @@ export function App() {
 
   const handleDeleteAllJournal = async () => {
     if (window.confirm("Bạn có chắc chắn muốn xóa TOÀN BỘ dữ liệu nhật trình không? Hành động này không thể hoàn tác.")) {
-      const res = await fetch('/api/journal', {
+      const res = await fetch(`/api/journal?profileId=${activeProfileId}`, {
         method: 'DELETE',
       });
       const data = await res.json();
@@ -614,7 +711,7 @@ export function App() {
     try {
       // Update each entry's STT on the backend
       const promises = updates.map(({ id, stt }) =>
-        fetch(`/api/journal/${id}`, {
+        fetch(`/api/journal/${id}?profileId=${activeProfileId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ stt }),
@@ -646,7 +743,7 @@ export function App() {
   };
 
   const handleSaveRecord = (updated: ExtractionRecord) => {
-    fetch(`/api/records/${updated.id}`, {
+    fetch(`/api/records/${updated.id}?profileId=${activeProfileId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updated),
@@ -674,7 +771,7 @@ export function App() {
   };
 
   const handleDeleteRecord = (id: string) => {
-    fetch(`/api/records/${id}`, { method: 'DELETE' }).catch(console.error);
+    fetch(`/api/records/${id}?profileId=${activeProfileId}`, { method: 'DELETE' }).catch(console.error);
     // Tìm biển số của record bị xóa để đồng bộ journal
     const deletedRecord = records.find(r => r.id === id);
     const newRecords = records.filter((r) => r.id !== id);
@@ -686,7 +783,7 @@ export function App() {
 
   const handleDeleteGroup = (recordIds: string[], plate: string, tripIdx: number) => {
     if (window.confirm(`Bạn có chắc muốn xóa lượt ${tripIdx} của biển số ${plate}?`)) {
-      recordIds.forEach(id => fetch(`/api/records/${id}`, { method: 'DELETE' }).catch(console.error));
+      recordIds.forEach(id => fetch(`/api/records/${id}?profileId=${activeProfileId}`, { method: 'DELETE' }).catch(console.error));
       const newRecords = records.filter((r) => !recordIds.includes(r.id));
       setRecords(newRecords);
       // Đồng bộ journal: xóa entry thừa cho biển số này
@@ -715,7 +812,7 @@ export function App() {
     };
 
     recordIds.forEach(id => {
-      fetch(`/api/records/${id}`, {
+      fetch(`/api/records/${id}?profileId=${activeProfileId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fullUpdates),
@@ -731,7 +828,7 @@ export function App() {
   };
 
   const handleBatchDelete = (ids: string[]) => {
-    ids.forEach(id => fetch(`/api/records/${id}`, { method: 'DELETE' }).catch(console.error));
+    ids.forEach(id => fetch(`/api/records/${id}?profileId=${activeProfileId}`, { method: 'DELETE' }).catch(console.error));
     setRecords((prev) => prev.filter((r) => !ids.includes(r.id)));
   };
 
@@ -782,8 +879,9 @@ export function App() {
             formattedTime: baseRecord.formattedTime,
             formattedDate: baseRecord.formattedDate,
             parsedDateISO: baseRecord.parsedDateISO,
-            location: baseRecord.location,
-            notes: "Bổ sung ảnh thủ công vào lượt",
+            location: baseRecord.location || '',
+            notes: "Cập nhật qua kéo thả ảnh bổ sung",
+            profileId: activeProfileId
           }),
         });
 
@@ -815,7 +913,7 @@ export function App() {
   const handleReorderRecords = (reorderedList: ExtractionRecord[]) => {
     // Cập nhật lên server
     reorderedList.forEach((r) => {
-      fetch(`/api/records/${r.id}`, {
+      fetch(`/api/records/${r.id}?profileId=${activeProfileId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ customOrder: r.customOrder }),
@@ -887,7 +985,26 @@ export function App() {
         updateInfo={updateInfo}
         onShowUpdate={() => setShowUpdateModal(true)}
         currentVersion={CURRENT_VERSION}
+        profiles={profiles}
+        activeProfileId={activeProfileId}
+        setActiveProfileId={(id) => {
+          setActiveProfileId(id);
+          const p = profiles.find(x => x.id === id);
+          if (p) setMinPhotoThreshold(p.minPhotoThreshold || 4);
+        }}
+        onManageProfiles={() => setShowProfileManager(true)}
       />
+
+      {/* Profile Manager Modal */}
+      {showProfileManager && (
+        <ProfileManagerModal
+          profiles={profiles}
+          onClose={() => setShowProfileManager(false)}
+          onAdd={handleAddProfile}
+          onUpdate={handleUpdateProfile}
+          onDelete={handleDeleteProfile}
+        />
+      )}
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
@@ -1199,6 +1316,7 @@ export function App() {
           onClose={() => setShowManualEntry(false)}
           onSaved={handleManualEntry}
           uniquePlates={Array.from(new Set(records.map(r => r.licensePlate).filter(Boolean)))}
+          activeProfileId={activeProfileId}
         />
       )}
 
