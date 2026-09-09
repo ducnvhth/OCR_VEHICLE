@@ -51,11 +51,7 @@ export function App() {
     return savedThreshold ? parseInt(savedThreshold, 10) || 4 : 4;
   });
 
-  // Trip gap in minutes: images more than this apart are considered a new trip
-  const [tripGapMinutes, setTripGapMinutes] = useState<number>(() => {
-    const saved = localStorage.getItem('trip_gap_minutes');
-    return saved ? parseInt(saved, 10) || 60 : 60;
-  });
+
 
   const [activeTab, setActiveTab] = useState<'grouped' | 'analytics' | 'table' | 'journal'>('grouped');
   const [showManualEntry, setShowManualEntry] = useState(false);
@@ -159,9 +155,7 @@ export function App() {
     localStorage.setItem('min_photo_threshold', minPhotoThreshold.toString());
   }, [minPhotoThreshold]);
 
-  useEffect(() => {
-    localStorage.setItem('trip_gap_minutes', tripGapMinutes.toString());
-  }, [tripGapMinutes]);
+
 
   // Check health endpoint for API key
   useEffect(() => {
@@ -180,8 +174,8 @@ export function App() {
 
   // Grouped vehicles by threshold
   const groupedVehicles = useMemo(() => {
-    return groupRecordsByLicensePlate(records, minPhotoThreshold, tripGapMinutes);
-  }, [records, minPhotoThreshold, tripGapMinutes]);
+    return groupRecordsByLicensePlate(records, minPhotoThreshold);
+  }, [records, minPhotoThreshold]);
 
 
   // Filtered grouped vehicles
@@ -220,7 +214,9 @@ export function App() {
   }, [groupedVehicles, searchTerm, sttSearchTerm, journalMapping]);
 
   // Stats calculation
-  const stats = useMemo(() => calculateSystemStats(records, minPhotoThreshold), [records, minPhotoThreshold]);
+  const stats = useMemo(() => {
+    return calculateSystemStats(records, minPhotoThreshold);
+  }, [records, minPhotoThreshold]);
 
   // Helper to convert file to base64
   const fileToBase64 = (file: File): Promise<string> => {
@@ -274,7 +270,7 @@ export function App() {
 
   // Hàm xóa journal entries thừa cho 1 biển số cụ thể (dùng khi xóa lượt/ảnh)
   const removeExcessJournalEntries = (plate: string, remainingRecords: ExtractionRecord[]) => {
-    const groups = groupRecordsByLicensePlate(remainingRecords, minPhotoThreshold, tripGapMinutes);
+    const groups = groupRecordsByLicensePlate(remainingRecords, minPhotoThreshold);
     const expectedTripCount = groups.filter(g => g.licensePlate === plate).length;
     
     const journalForPlate = journalEntries.filter(e => e.licensePlate === plate);
@@ -295,7 +291,7 @@ export function App() {
     if (records.length === 0) return;
 
     // Tính toán số lượt thực tế của mỗi biển số
-    const groups = groupRecordsByLicensePlate(records, minPhotoThreshold, tripGapMinutes);
+    const groups = groupRecordsByLicensePlate(records, minPhotoThreshold);
     const validGroups = groups.filter(g => g.licensePlate && g.licensePlate !== 'CHƯA RÕ BIỂN SỐ');
     
     // Đếm số lượt kỳ vọng cho mỗi biển số
@@ -307,7 +303,6 @@ export function App() {
     // So sánh với journal hiện tại
     const missingPlates: string[] = [];
     const excessEntries: any[] = [];
-
     Object.keys(tripCounts).forEach(plate => {
       const expectedCount = tripCounts[plate];
       const actualCount = journalEntries.filter(e => e.licensePlate === plate).length;
@@ -341,7 +336,7 @@ export function App() {
       });
       setJournalEntries(prev => prev.filter(e => !excessEntries.some(d => d.id === e.id)));
     }
-  }, [records, minPhotoThreshold, tripGapMinutes, journalEntries.length]);
+  }, [records, minPhotoThreshold, journalEntries.length]);
 
   const handleFilesSelected = async (files: FileList | File[]) => {
     if (files.length === 0) return;
@@ -459,13 +454,13 @@ export function App() {
   };
 
   const handleExportExcel = () => {
-    downloadXlsx(records, minPhotoThreshold, tripGapMinutes);
+    downloadXlsx(records, minPhotoThreshold);
   };
 
   const handleExportImages = async () => {
     setIsExporting(true);
     try {
-      await downloadImagesZip(records, journalMapping, tripGapMinutes);
+      await downloadImagesZip(records, journalMapping);
     } catch (err) {
       console.error(err);
       alert('Có lỗi xảy ra khi xuất folder ảnh.');
@@ -476,7 +471,7 @@ export function App() {
 
   const handleExportJournal = (sortedEntries?: any[]) => {
     const entriesToExport = sortedEntries && sortedEntries.length > 0 ? sortedEntries : journalEntries;
-    exportJournalXlsx(entriesToExport, records, tripGapMinutes);
+    exportJournalXlsx(entriesToExport, records);
   };
 
   const handleUploadJournal = async (file: File) => {
@@ -562,6 +557,10 @@ export function App() {
   };
 
   const handleUpdateJournal = async (id: string, entry: any) => {
+    // Lưu lại biển số cũ trước khi sửa
+    const oldEntry = journalEntries.find(e => e.id === id);
+    const oldPlate = oldEntry ? oldEntry.licensePlate : '';
+
     const res = await fetch(`/api/journal/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -570,6 +569,22 @@ export function App() {
     const data = await res.json();
     if (data.success) {
       setJournalEntries(journalEntries.map(e => e.id === id ? data.record : e));
+
+      // Đồng bộ: Nếu đổi biển số, đổi luôn biển số của các ảnh đang khớp với biển cũ
+      if (oldPlate && oldPlate !== entry.licensePlate) {
+        const recordsToUpdate = records.filter(r => r.licensePlate === oldPlate);
+        if (recordsToUpdate.length > 0) {
+          recordsToUpdate.forEach(r => {
+            fetch(`/api/records/${r.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ...r, licensePlate: entry.licensePlate }),
+            }).catch(console.error);
+          });
+          // Cập nhật state nội bộ để giao diện đổi ngay lập tức
+          setRecords(prev => prev.map(r => r.licensePlate === oldPlate ? { ...r, licensePlate: entry.licensePlate } : r));
+        }
+      }
     }
   };
 
@@ -975,31 +990,7 @@ export function App() {
                 <span className="text-slate-500 font-medium">ảnh / biển</span>
               </div>
 
-              {/* Trip Gap Config */}
-              <div className="flex items-center space-x-2 bg-white border border-slate-200 px-3 py-1.5 rounded-xl shadow-xs text-xs">
-                <span className="text-base">🔄</span>
-                <span className="font-semibold text-slate-700 whitespace-nowrap">Tách lượt sau:</span>
-                <div className="flex items-center space-x-1">
-                  <button
-                    onClick={() => setTripGapMinutes(Math.max(15, tripGapMinutes - 15))}
-                    className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 font-bold text-slate-800 flex items-center justify-center cursor-pointer"
-                    title="Giảm ngưỡng tách lượt"
-                  >
-                    -
-                  </button>
-                  <span className="font-mono font-black text-violet-700 px-1.5 text-sm">
-                    {tripGapMinutes}
-                  </span>
-                  <button
-                    onClick={() => setTripGapMinutes(tripGapMinutes + 15)}
-                    className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 font-bold text-slate-800 flex items-center justify-center cursor-pointer"
-                    title="Tăng ngưỡng tách lượt"
-                  >
-                    +
-                  </button>
-                </div>
-                <span className="text-slate-500 font-medium">phút</span>
-              </div>
+
             </div>
           </div>
 
@@ -1087,7 +1078,7 @@ export function App() {
                   <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5 md:mt-0" />
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span>
-                      Hiện có <strong>{stats.warningPlatesCount} biển số xe</strong> có ít hơn chỉ tiêu <strong>{minPhotoThreshold} ảnh</strong>:
+                      Hiện có <strong>{stats.warningPlatesCount} biển số xe</strong> chưa đạt đúng chỉ tiêu <strong>{minPhotoThreshold} ảnh</strong> (thừa hoặc thiếu):
                     </span>
                     {warningPlatesList.map(plate => (
                       <button

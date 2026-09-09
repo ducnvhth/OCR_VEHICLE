@@ -272,6 +272,23 @@ app.get("/api/records", (req, res) => {
 app.delete("/api/records/:id", (req, res) => {
   const id = req.params.id;
   let records = readDb();
+  
+  // Find record to delete its associated image file
+  const recordToDelete = records.find(r => r.id === id);
+  if (recordToDelete && recordToDelete.imageSrc) {
+    try {
+      const fileName = recordToDelete.imageSrc.split('/').pop();
+      if (fileName) {
+        const imagePath = path.join(uploadsDir, fileName);
+        if (fs.existsSync(imagePath)) {
+          fs.unlinkSync(imagePath);
+        }
+      }
+    } catch (err) {
+      console.error("Error deleting image file:", err);
+    }
+  }
+
   records = records.filter(r => r.id !== id);
   writeDb(records);
   res.json({ success: true });
@@ -280,6 +297,21 @@ app.delete("/api/records/:id", (req, res) => {
 // Delete all records
 app.delete("/api/records", (req, res) => {
   writeDb([]);
+  
+  // Delete all physical files in uploads directory
+  try {
+    if (fs.existsSync(uploadsDir)) {
+      const files = fs.readdirSync(uploadsDir);
+      for (const file of files) {
+        if (file !== '.gitkeep') {
+          fs.unlinkSync(path.join(uploadsDir, file));
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Error clearing uploads directory:", err);
+  }
+
   res.json({ success: true });
 });
 

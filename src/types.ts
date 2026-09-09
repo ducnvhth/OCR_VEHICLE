@@ -25,6 +25,8 @@ export interface GroupedVehicle {
   isWarning: boolean;
   requiredCount: number;
   missingCount: number;
+  isExcess?: boolean;
+  excessCount?: number;
   locations: string[];
   tripIndex: number;       // Lượt thứ mấy (1-based)
   totalTrips: number;      // Tổng số lượt trong ngày cho biển số này

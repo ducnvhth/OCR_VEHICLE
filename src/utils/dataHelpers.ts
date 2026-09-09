@@ -60,53 +60,100 @@ export function formatLicensePlate(plate: string): string {
 
   return singleFormatted;
 }
+
+export function formatExcelPlate(rawPlate: string): string {
+  if (!rawPlate || rawPlate === 'CHƯA RÕ BIỂN SỐ') return rawPlate;
+  let plate = rawPlate.toUpperCase();
+
+  // 1. Check if it explicitly contains the " - " pattern from our formatLicensePlate
+  if (plate.includes(' - ')) {
+    return plate.split(' - ').map(p => p.replace(/[^A-Z0-9]/g, '')).join('-');
+  }
+
+  // 2. Extract only letters and numbers for analysis
+  const pureAlphaNum = plate.replace(/[^A-Z0-9]/g, '');
+
+  // 3. Try to detect trailer plates (Rơ moóc) that are stuck together without hyphens
+  // Trailer plates often contain 'R' or 'RM' for the second part.
+  // E.g., 37H17548RM3232 (14 chars) -> 37H17548 and RM3232
+  if (pureAlphaNum.length >= 13) {
+    // Look for R or RM in the middle (usually the trailer plate is 6-7 chars long)
+    const match = pureAlphaNum.match(/^(.{6,9}?)(RM\d{4,5}|R\d{4,5})$/);
+    if (match) {
+      return `${match[1]}-${match[2]}`;
+    }
+  }
+
+  // 4. Try splitting by existing separators (hyphen or space)
+  const separator = plate.includes('-') ? '-' : (plate.includes(' ') ? ' ' : null);
+  if (separator) {
+    const parts = plate.split(separator);
+    if (parts.length === 2) {
+      const p1 = parts[0].replace(/[^A-Z0-9]/g, '');
+      const p2 = parts[1].replace(/[^A-Z0-9]/g, '');
+      // If both parts look like valid plates (length >= 5)
+      if (p1.length >= 5 && p2.length >= 5) {
+        return `${p1}-${p2}`;
+      }
+    }
+  }
+
+  // 5. Fallback: it's a regular single plate, just remove everything except alphanumeric
+  return pureAlphaNum;
+}
+
 export function groupRecordsByLicensePlate(
   records: ExtractionRecord[],
-  threshold: number = 4,
-  tripGapMinutes: number = 60
+  threshold: number = 4
 ): GroupedVehicle[] {
-  // Step 1: Group all records by license plate
-  const plateMap = new Map<string, ExtractionRecord[]>();
-  records.forEach((rec) => {
-    const plate = rec.licensePlate.trim().toUpperCase() || 'CHƯA RÕ BIỂN SỐ';
-    if (!plateMap.has(plate)) plateMap.set(plate, []);
-    plateMap.get(plate)!.push(rec);
+  // Khoảng thời gian để tách lượt (hardcode 60 phút)
+  const tripGapMinutes = 60;
+  const groupedByPlate = new Map<string, ExtractionRecord[]>();
+
+  records.forEach((r) => {
+    const plate = r.licensePlate.trim().toUpperCase() || 'CHƯA RÕ BIỂN SỐ';
+    if (!groupedByPlate.has(plate)) {
+      groupedByPlate.set(plate, []);
+    }
+    groupedByPlate.get(plate)!.push(r);
   });
 
   const groups: GroupedVehicle[] = [];
-  const GAP_MS = tripGapMinutes * 60 * 1000;
 
-  plateMap.forEach((recList, plate) => {
-    // Step 2: Sort records chronologically (oldest first)
-    const sorted = [...recList].sort(
-      (a, b) => new Date(a.parsedDateISO).getTime() - new Date(b.parsedDateISO).getTime()
-    );
+  groupedByPlate.forEach((plateRecords, plate) => {
+    // Sắp xếp các ảnh trong cùng 1 biển số theo thời gian để tách lượt chính xác
+    const sortedRecords = [...plateRecords].sort((a, b) => {
+      return new Date(a.parsedDateISO).getTime() - new Date(b.parsedDateISO).getTime();
+    });
 
-    // Step 3: Cluster into trips using gap-based algorithm
-    // A new trip starts when two consecutive records are > GAP_MS apart
     const trips: ExtractionRecord[][] = [];
-    let currentTrip: ExtractionRecord[] = [sorted[0]];
+    let currentTrip: ExtractionRecord[] = [];
 
-    for (let i = 1; i < sorted.length; i++) {
-      const prev = new Date(sorted[i - 1].parsedDateISO).getTime();
-      const curr = new Date(sorted[i].parsedDateISO).getTime();
-      const gap = curr - prev;
-
-      if (gap > GAP_MS) {
-        // Start a new trip
-        trips.push(currentTrip);
-        currentTrip = [sorted[i]];
+    sortedRecords.forEach((rec, idx) => {
+      if (idx === 0) {
+        currentTrip.push(rec);
       } else {
-        currentTrip.push(sorted[i]);
+        const prevRec = currentTrip[currentTrip.length - 1];
+        // Chỉ cùng giờ:phút và cùng ngày thì mới gộp chung 1 lượt
+        const isSameTime = rec.formattedTime === prevRec.formattedTime && rec.formattedDate === prevRec.formattedDate;
+
+        if (!isSameTime) {
+          trips.push([...currentTrip]);
+          currentTrip = [rec];
+        } else {
+          currentTrip.push(rec);
+        }
       }
+    });
+
+    if (currentTrip.length > 0) {
+      trips.push(currentTrip);
     }
-    trips.push(currentTrip); // Push the last trip
 
     const totalTrips = trips.length;
 
-    // Step 4: Create a GroupedVehicle for each trip
     trips.forEach((tripRecords, tripIdx) => {
-      // Sort records within a trip (respect customOrder, else chronological oldest-first)
+      // Sắp xếp lại để hiển thị (tôn trọng customOrder)
       const displaySorted = [...tripRecords].sort((a, b) => {
         if (a.customOrder !== undefined && b.customOrder !== undefined) {
           return a.customOrder - b.customOrder;
@@ -115,15 +162,18 @@ export function groupRecordsByLicensePlate(
       });
 
       const photoCount = displaySorted.length;
-      const isWarning = photoCount < threshold;
-      const missingCount = isWarning ? threshold - photoCount : 0;
+      // Cảnh báo khi: (Thiếu ảnh) HOẶC (Thừa ảnh)
+      const isWarning = photoCount !== threshold;
+      const isExcess = photoCount > threshold;
+      const missingCount = isWarning && !isExcess ? threshold - photoCount : 0;
+      const excessCount = isExcess ? photoCount - threshold : 0;
+
       const locations = Array.from(
         new Set(displaySorted.map((r) => r.location).filter(Boolean) as string[])
       );
 
-      // Use earliest record for the trip date
-      const earliestRec = tripRecords[0]; // already sorted ascending
-      const latestRec = tripRecords[tripRecords.length - 1];
+      const earliestRec = displaySorted[0];
+      const latestRec = displaySorted[displaySorted.length - 1];
 
       groups.push({
         licensePlate: plate,
@@ -132,33 +182,43 @@ export function groupRecordsByLicensePlate(
         latestTimestamp: latestRec.timestamp,
         earliestTimestamp: earliestRec.timestamp,
         isWarning,
+        isExcess,
         requiredCount: threshold,
         missingCount,
+        excessCount,
         locations,
         tripIndex: tripIdx + 1,
-        totalTrips,
+        totalTrips: totalTrips,
         tripDate: earliestRec.formattedDate || '',
       });
     });
   });
 
-  // Step 5: Sort groups — warnings first, then by latest timestamp desc
+  // Sắp xếp nhóm: Cảnh báo lên đầu, sau đó sắp xếp theo thời gian mới nhất
   return groups.sort((a, b) => {
     if (a.isWarning !== b.isWarning) return a.isWarning ? -1 : 1;
-    // Sort by earliest time of trip descending (most recent trip first)
     const aTime = new Date(a.records[a.records.length - 1]?.parsedDateISO || 0).getTime();
     const bTime = new Date(b.records[b.records.length - 1]?.parsedDateISO || 0).getTime();
     return bTime - aTime;
   });
 }
 
-
 export function calculateSystemStats(records: ExtractionRecord[], threshold: number = 4) {
   const totalRecords = records.length;
   const groups = groupRecordsByLicensePlate(records, threshold);
-  const totalUniqueVehicles = groups.length;
-  const warningPlatesCount = groups.filter((g) => g.isWarning).length;
-  const compliantPlatesCount = groups.filter((g) => !g.isWarning).length;
+  
+  // Tổng số biển xe (xe duy nhất), chứ không phải tổng số lượt
+  const uniquePlates = new Set(groups.map((g) => g.licensePlate));
+  const totalUniqueVehicles = uniquePlates.size;
+  
+  // Một biển số được coi là có cảnh báo nếu BẤT KỲ lượt nào của nó bị thiếu ảnh
+  let warningPlatesCount = 0;
+  uniquePlates.forEach(plate => {
+    const hasWarning = groups.some(g => g.licensePlate === plate && g.isWarning);
+    if (hasWarning) warningPlatesCount++;
+  });
+  
+  const compliantPlatesCount = totalUniqueVehicles - warningPlatesCount;
 
   const avgConfidence = totalRecords > 0
     ? Math.round(records.reduce((acc, r) => acc + (r.confidence || 0), 0) / totalRecords)
@@ -259,7 +319,7 @@ export async function downloadXlsx(records: ExtractionRecord[], threshold: numbe
   ];
 
   // Compute trip groups to know totalTrips per plate per day
-  const tripGroups = groupRecordsByLicensePlate(records, threshold, tripGapMinutes);
+  const tripGroups = groupRecordsByLicensePlate(records, threshold);
   // Map: "PLATE|DATE" -> totalTrips
   const tripCountMap = new Map<string, number>();
   tripGroups.forEach(g => {
@@ -281,8 +341,12 @@ export async function downloadXlsx(records: ExtractionRecord[], threshold: numbe
 
   for (let i = 0; i < sortedRecords.length; i++) {
     const r = sortedRecords[i];
-    const plate = r.licensePlate.trim().toUpperCase() || 'CHƯA RÕ BIỂN SỐ';
+    const rawPlate = r.licensePlate.trim().toUpperCase() || 'CHƯA RÕ BIỂN SỐ';
     
+    // Xử lý định dạng biển số xe cho Excel bằng hàm thông minh
+    const excelPlate = formatExcelPlate(rawPlate);
+
+    const plate = rawPlate; // Giữ nguyên để tra cứu Map (Map được group bằng rawPlate)
     const key = `${plate}|${r.formattedDate}`;
     const totalTrips = tripCountMap.get(key) || 1;
     const isWarning = plateWarningMap.get(plate) ?? false;
@@ -292,7 +356,7 @@ export async function downloadXlsx(records: ExtractionRecord[], threshold: numbe
     worksheet.addRow({
       stt: i + 1,
       date: r.formattedDate,
-      plate: plate,
+      plate: excelPlate,
       timeIn: r.formattedTime,
       timeOut: 'X',
       trips: totalTrips,
@@ -350,7 +414,7 @@ export async function downloadImagesZip(
   if (!folder) return;
 
   // Group records by plate using the same gap setting as the UI
-  const grouped = groupRecordsByLicensePlate(records, 0, tripGapMinutes);
+  const grouped = groupRecordsByLicensePlate(records, 0);
 
   // For each plate, sort by time and download
   for (const group of grouped) {
@@ -409,7 +473,7 @@ export async function exportJournalXlsx(entries: any[], records?: ExtractionReco
 
   let grouped: any[] = [];
   if (records && records.length > 0) {
-    grouped = groupRecordsByLicensePlate(records, 0, tripGapMinutes);
+    grouped = groupRecordsByLicensePlate(records, 0);
   }
 
   const workbook = new ExcelJS.Workbook();
@@ -457,7 +521,7 @@ export async function exportJournalXlsx(entries: any[], records?: ExtractionReco
 
     worksheet.addRow({
       stt: entry.stt,
-      plate: entry.licensePlate,
+      plate: formatExcelPlate(entry.licensePlate),
       date: dateStr,
       time: timeStr,
     });

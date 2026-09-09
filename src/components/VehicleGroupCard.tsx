@@ -23,7 +23,7 @@ export const VehicleGroupCard: React.FC<VehicleGroupCardProps> = ({
   onReorderRecords,
   onEditGroup,
 }) => {
-  const { licensePlate, records, photoCount, isWarning, requiredCount, missingCount, latestTimestamp, earliestTimestamp, tripIndex, totalTrips } = group;
+  const { licensePlate, records, photoCount, isWarning, isExcess, requiredCount, missingCount, excessCount, latestTimestamp, earliestTimestamp, tripIndex, totalTrips } = group;
 
   const [isCopying, setIsCopying] = React.useState(false);
   const [toastMsg, setToastMsg] = React.useState<string | null>(null);
@@ -277,10 +277,17 @@ export const VehicleGroupCard: React.FC<VehicleGroupCardProps> = ({
 
               {/* Alert / Compliance Badge */}
               {isWarning ? (
-                <span className="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 text-xs font-bold border border-rose-300 flex items-center gap-1.5 shadow-xs">
-                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                  CẢNH BÁO: Mới có {photoCount}/{requiredCount} ảnh (Thiếu {missingCount} ảnh)
-                </span>
+                isExcess ? (
+                  <span className="px-2.5 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-bold border border-orange-300 flex items-center gap-1.5 shadow-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                    CẢNH BÁO: Có {photoCount}/{requiredCount} ảnh (Thừa {excessCount} ảnh)
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 text-xs font-bold border border-rose-300 flex items-center gap-1.5 shadow-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    CẢNH BÁO: Mới có {photoCount}/{requiredCount} ảnh (Thiếu {missingCount} ảnh)
+                  </span>
+                )
               ) : (
                 <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-300 flex items-center gap-1.5 shadow-xs">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
